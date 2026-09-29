@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 
 const connectDB = require("./config/database");
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
 
@@ -13,9 +14,12 @@ connectDB();
 
 app.get("/", (req, res) => {
   res.json({
-    message: "Home Service Booking API is running",
+    message: "FixMate Home Services Booking API is running",
   });
 });
+
+// Routes
+app.use("/api/auth", authRoutes);
 
 const PORT = process.env.PORT || 5000;
 

@@ -2,11 +2,12 @@ const mongoose = require("mongoose");
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB connected successfully");
+    const mongoUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/fixmate";
+    const conn = await mongoose.connect(mongoUri);
+    console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error("MongoDB connection failed:", error.message);
-    process.exit(1);
+    console.error(`⚠️ MongoDB Connection Warning: ${error.message}`);
+    console.error(`💡 Tip: Update process.env.MONGO_URI in backend/.env with your MongoDB Atlas connection string.`);
   }
 };
 

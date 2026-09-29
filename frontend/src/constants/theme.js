@@ -16,8 +16,6 @@ export const COLORS = {
   disabledText: "#94A3B8",
 };
 
-export const Colors = COLORS;
-
 export const FONTS = {
   regular: "System",
   medium: "System",

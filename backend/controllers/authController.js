@@ -1,0 +1,428 @@
+const User = require("../models/User");
+const generateToken = require("../utils/generateToken");
+const { generateOTP, getOtpExpiry, logOTP } = require("../services/otpService");
+
+// Helper to sanitize user object for response
+const sanitizeUser = (user) => {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    isVerified: user.isVerified,
+    providerDetails: user.providerDetails || {},
+  };
+};
+
+/**
+ * @desc    Register a new user (Customer or Service Provider)
+ * @route   POST /api/auth/register
+ * @access  Public
+ */
+const register = async (req, res) => {
+  try {
+    const { name, email, phone, password, role, providerDetails } = req.body;
+
+    if (!name || !email || !phone || !password || !role) {
+      return res.status(400).json({ message: "Please fill in all required fields" });
+    }
+
+    // Security check: Admin role cannot be registered publicly
+    if (role === "admin") {
+      return res.status(400).json({
+        message: "Admin accounts cannot be created through public registration",
+      });
+    }
+
+    if (!["customer", "provider"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role selected" });
+    }
+
+    // Check if email or phone already exists
+    const emailExists = await User.findOne({ email: email.toLowerCase().trim() });
+    if (emailExists) {
+      return res.status(400).json({ message: "An account with this email already exists" });
+    }
+
+    const phoneExists = await User.findOne({ phone: phone.trim() });
+    if (phoneExists) {
+      return res.status(400).json({ message: "An account with this phone number already exists" });
+    }
+
+    // Generate 6-digit OTP
+    const otp = generateOTP();
+    const otpExpires = getOtpExpiry(10); // Valid for 10 minutes
+
+    const userData = {
+      name,
+      email: email.toLowerCase().trim(),
+      phone: phone.trim(),
+      password,
+      role,
+      isVerified: false,
+      otp,
+      otpExpires,
+      otpAttempts: 0,
+      otpLastSent: new Date(),
+    };
+
+    if (role === "provider" && providerDetails) {
+      userData.providerDetails = providerDetails;
+    }
+
+    const user = await User.create(userData);
+
+    // Log OTP to backend console for dev/testing
+    logOTP(user.email, otp, "Account Registration Verification");
+
+    return res.status(201).json({
+      message: "Registration successful. Please verify the OTP sent to your email/phone.",
+      identifier: user.email,
+      role: user.role,
+    });
+  } catch (error) {
+    console.error("Register Error:", error);
+    return res.status(500).json({ message: error.message || "Server error during registration" });
+  }
+};
+
+/**
+ * @desc    Verify OTP for account activation or password reset
+ * @route   POST /api/auth/verify-otp
+ * @access  Public
+ */
+const verifyOtp = async (req, res) => {
+  try {
+    const { identifier, otp } = req.body;
+
+    if (!identifier || !otp) {
+      return res.status(400).json({ message: "Identifier and OTP code are required" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.isVerified) {
+      // User is already verified, issue token directly
+      const token = generateToken(user._id, user.role);
+      return res.status(200).json({
+        message: "Account is already verified",
+        token,
+        user: sanitizeUser(user),
+      });
+    }
+
+    // Check OTP expiration
+    if (!user.otpExpires || user.otpExpires < new Date()) {
+      return res.status(400).json({ message: "OTP has expired. Please request a new code." });
+    }
+
+    // Check attempt limits (max 5)
+    if (user.otpAttempts >= 5) {
+      return res.status(400).json({
+        message: "Too many failed attempts. Please request a new OTP code.",
+      });
+    }
+
+    // Verify OTP code
+    if (user.otp !== otp.toString().trim()) {
+      user.otpAttempts += 1;
+      await user.save();
+      return res.status(400).json({
+        message: `Invalid OTP code. ${5 - user.otpAttempts} attempt(s) remaining.`,
+      });
+    }
+
+    // Successful OTP verification
+    user.isVerified = true;
+    user.otp = null;
+    user.otpExpires = null;
+    user.otpAttempts = 0;
+    await user.save();
+
+    const token = generateToken(user._id, user.role);
+
+    return res.status(200).json({
+      message: "Account verified successfully",
+      token,
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    console.error("Verify OTP Error:", error);
+    return res.status(500).json({ message: "Server error during OTP verification" });
+  }
+};
+
+/**
+ * @desc    Resend OTP to user
+ * @route   POST /api/auth/resend-otp
+ * @access  Public
+ */
+const resendOtp = async (req, res) => {
+  try {
+    const { identifier } = req.body;
+
+    if (!identifier) {
+      return res.status(400).json({ message: "Identifier (email or phone) is required" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User account not found" });
+    }
+
+    // Cooldown check (60 seconds)
+    if (user.otpLastSent && new Date() - new Date(user.otpLastSent) < 60 * 1000) {
+      const remainingSecs = Math.ceil(
+        (60 * 1000 - (new Date() - new Date(user.otpLastSent))) / 1000
+      );
+      return res.status(400).json({
+        message: `Please wait ${remainingSecs} seconds before requesting a new OTP.`,
+      });
+    }
+
+    const newOtp = generateOTP();
+    user.otp = newOtp;
+    user.otpExpires = getOtpExpiry(10);
+    user.otpAttempts = 0;
+    user.otpLastSent = new Date();
+    await user.save();
+
+    logOTP(user.email, newOtp, "Resent Verification OTP");
+
+    return res.status(200).json({
+      message: "New OTP code sent successfully",
+      identifier: user.email,
+    });
+  } catch (error) {
+    console.error("Resend OTP Error:", error);
+    return res.status(500).json({ message: "Server error while resending OTP" });
+  }
+};
+
+/**
+ * @desc    User Login
+ * @route   POST /api/auth/login
+ * @access  Public
+ */
+const login = async (req, res) => {
+  try {
+    const { identifier, password } = req.body;
+
+    if (!identifier || !password) {
+      return res.status(400).json({ message: "Please provide email/phone and password" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(401).json({ message: "Invalid email/phone or password" });
+    }
+
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid email/phone or password" });
+    }
+
+    // If account is not verified yet, send a fresh OTP and prompt for verification
+    if (!user.isVerified) {
+      const newOtp = generateOTP();
+      user.otp = newOtp;
+      user.otpExpires = getOtpExpiry(10);
+      user.otpAttempts = 0;
+      user.otpLastSent = new Date();
+      await user.save();
+
+      logOTP(user.email, newOtp, "Login Verification Required");
+
+      return res.status(403).json({
+        message: "Account not verified. A new OTP has been sent to your email/phone.",
+        requiresVerification: true,
+        identifier: user.email,
+      });
+    }
+
+    const token = generateToken(user._id, user.role);
+
+    return res.status(200).json({
+      message: "Login successful",
+      token,
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    console.error("Login Error:", error);
+    return res.status(500).json({ message: "Server error during login" });
+  }
+};
+
+/**
+ * @desc    Initiate Forgot Password flow
+ * @route   POST /api/auth/forgot-password
+ * @access  Public
+ */
+const forgotPassword = async (req, res) => {
+  try {
+    const { identifier } = req.body;
+
+    if (!identifier) {
+      return res.status(400).json({ message: "Please enter your email or phone number" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "No user found with provided email or phone" });
+    }
+
+    const resetOtp = generateOTP();
+    user.otp = resetOtp;
+    user.otpExpires = getOtpExpiry(15);
+    user.otpAttempts = 0;
+    user.otpLastSent = new Date();
+    await user.save();
+
+    logOTP(user.email, resetOtp, "Password Reset OTP");
+
+    return res.status(200).json({
+      message: "Password reset OTP sent successfully",
+      identifier: user.email,
+    });
+  } catch (error) {
+    console.error("Forgot Password Error:", error);
+    return res.status(500).json({ message: "Server error initiating password reset" });
+  }
+};
+
+/**
+ * @desc    Verify Reset Password OTP
+ * @route   POST /api/auth/verify-reset-otp
+ * @access  Public
+ */
+const verifyResetOtp = async (req, res) => {
+  try {
+    const { identifier, otp } = req.body;
+
+    if (!identifier || !otp) {
+      return res.status(400).json({ message: "Identifier and OTP code are required" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (!user.otpExpires || user.otpExpires < new Date()) {
+      return res.status(400).json({ message: "Reset OTP has expired. Please request again." });
+    }
+
+    if (user.otp !== otp.toString().trim()) {
+      return res.status(400).json({ message: "Invalid OTP code" });
+    }
+
+    return res.status(200).json({
+      message: "OTP verified successfully. You can now reset your password.",
+      identifier: user.email,
+      otp,
+    });
+  } catch (error) {
+    console.error("Verify Reset OTP Error:", error);
+    return res.status(500).json({ message: "Server error verifying reset OTP" });
+  }
+};
+
+/**
+ * @desc    Reset Password with OTP
+ * @route   POST /api/auth/reset-password
+ * @access  Public
+ */
+const resetPassword = async (req, res) => {
+  try {
+    const { identifier, otp, newPassword } = req.body;
+
+    if (!identifier || !otp || !newPassword) {
+      return res.status(400).json({ message: "Identifier, OTP code, and new password are required" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters long" });
+    }
+
+    const cleanIdentifier = identifier.toLowerCase().trim();
+    const user = await User.findOne({
+      $or: [{ email: cleanIdentifier }, { phone: cleanIdentifier }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.otp !== otp.toString().trim() || !user.otpExpires || user.otpExpires < new Date()) {
+      return res.status(400).json({ message: "Invalid or expired OTP session" });
+    }
+
+    // Set new password (pre-save middleware handles hashing)
+    user.password = newPassword;
+    user.otp = null;
+    user.otpExpires = null;
+    user.otpAttempts = 0;
+    await user.save();
+
+    return res.status(200).json({
+      message: "Password reset successfully. You can now login with your new password.",
+    });
+  } catch (error) {
+    console.error("Reset Password Error:", error);
+    return res.status(500).json({ message: "Server error resetting password" });
+  }
+};
+
+/**
+ * @desc    Get Current Logged In User Profile
+ * @route   GET /api/auth/me
+ * @access  Private
+ */
+const getMe = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    return res.status(200).json({
+      user: sanitizeUser(req.user),
+    });
+  } catch (error) {
+    console.error("GetMe Error:", error);
+    return res.status(500).json({ message: "Server error fetching user profile" });
+  }
+};
+
+module.exports = {
+  register,
+  verifyOtp,
+  resendOtp,
+  login,
+  forgotPassword,
+  verifyResetOtp,
+  resetPassword,
+  getMe,
+};
