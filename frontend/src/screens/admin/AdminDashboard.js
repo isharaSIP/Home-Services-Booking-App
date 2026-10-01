@@ -1,202 +1,320 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   ScrollView,
   StatusBar,
+  Alert,
 } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
+import StatCard from "../../components/admin/StatCard";
+import TaskCard from "../../components/admin/TaskCard";
 
-const AdminDashboard = () => {
+// ---------------------------------------------------------------------------
+// Placeholder data. Replace with a call to adminService once the backend
+// exposes a dashboard summary endpoint.
+// ---------------------------------------------------------------------------
+const SUMMARY = {
+  totalCustomers: 12480,
+  customersGrowth: 4.2,
+  serviceProviders: 1946,
+  providersGrowth: 2.8,
+  activeBookings: 624,
+  bookingsToday: 18,
+  verifiedProviders: 1712,
+  pendingVerifications: 38,
+  newApplicationsToday: 12,
+  openComplaints: 17,
+  highPriorityComplaints: 5,
+};
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+const formatLongDate = (d) =>
+  `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+
+const getGreeting = (d) => {
+  const h = d.getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+};
+
+const getInitials = (name = "") =>
+  name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("") || "AD";
+
+const formatNumber = (n) => n.toLocaleString("en-US");
+
+const AdminDashboard = ({ navigation }) => {
   const { user, logout } = useAuth();
+  const insets = useSafeAreaInsets();
+
+  const now = useMemo(() => new Date(), []);
+  const firstName = (user?.name || "Admin").trim().split(/\s+/)[0];
+  const verifiedPercent = Math.round(
+    (SUMMARY.verifiedProviders / SUMMARY.serviceProviders) * 100
+  );
+
+  const confirmLogout = () =>
+    Alert.alert("Log out", "Do you want to log out of the admin account?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: logout },
+    ]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.secondary} />
-      <ScrollView contentContainerStyle={styles.container}>
-        {/* Header Bar */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.welcomeText}>System Administrator ⚡</Text>
-            <Text style={styles.userName}>{user?.name || "Admin"}</Text>
+    <View style={styles.screen}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
+      {/* Hero (fixed, does not scroll) */}
+      <View style={[styles.hero, { paddingTop: insets.top + 24 }]}>
+          <View style={styles.heroTop}>
+            <View style={styles.heroText}>
+              <Text style={styles.date}>{formatLongDate(now)}</Text>
+              <Text style={styles.greeting}>
+                {getGreeting(now)}, {firstName}
+              </Text>
+              <Text style={styles.role}>Platform Administrator · FixMate LK</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.avatar}
+              onPress={confirmLogout}
+              accessibilityRole="button"
+              accessibilityLabel="Account options, log out"
+            >
+              <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.logoutBadge} onPress={logout}>
-            <Text style={styles.logoutBadgeText}>Logout</Text>
-          </TouchableOpacity>
-        </View>
 
-        {/* Banner */}
-        <View style={styles.banner}>
-          <View style={styles.bannerBadge}>
-            <Text style={styles.bannerBadgeText}>ADMIN CONTROL PANEL</Text>
-          </View>
-          <Text style={styles.bannerTitle}>FixMate System Overview</Text>
-          <Text style={styles.bannerSubtitle}>
-            Manage users, approve service providers, monitor system bookings & security.
+          <Text style={styles.attention}>
+            {SUMMARY.pendingVerifications} applications and {SUMMARY.openComplaints}{" "}
+            complaints need your attention today.
           </Text>
-        </View>
 
-        {/* System Stats */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>142</Text>
-            <Text style={styles.statLabel}>Total Customers</Text>
+          <View style={styles.heroActions}>
+            <TouchableOpacity
+              style={styles.heroButton}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate("Verification")}
+            >
+              <Text style={styles.heroButtonText}>Review verifications</Text>
+              <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.heroButton}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate("Complaints")}
+            >
+              <Text style={styles.heroButtonText}>Open complaints</Text>
+              <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>38</Text>
-            <Text style={styles.statLabel}>Active Providers</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>310</Text>
-            <Text style={styles.statLabel}>Bookings</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>5</Text>
-            <Text style={styles.statLabel}>Pending Approvals</Text>
-          </View>
-        </View>
+      </View>
 
-        {/* Admin Info */}
-        <View style={styles.infoCard}>
-          <Text style={styles.infoCardTitle}>Admin Details</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Admin Email:</Text>
-            <Text style={styles.infoValue}>{user?.email}</Text>
+      {/* Only this area scrolls */}
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.body}>
+          {/* Platform overview */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Platform overview</Text>
+            <TouchableOpacity
+              style={styles.link}
+              onPress={() => navigation.navigate("Reports")}
+              accessibilityRole="link"
+            >
+              <Text style={styles.linkText}>Reports</Text>
+              <MaterialCommunityIcons name="arrow-right" size={16} color={COLORS.primary} />
+            </TouchableOpacity>
           </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Role Privilege:</Text>
-            <Text style={styles.roleAdmin}>SUPER ADMIN</Text>
+
+          <View style={styles.grid}>
+            <StatCard
+              label="Total customers"
+              value={formatNumber(SUMMARY.totalCustomers)}
+              trend={`${SUMMARY.customersGrowth}% this month`}
+              trendUp
+            />
+            <StatCard
+              label="Service providers"
+              value={formatNumber(SUMMARY.serviceProviders)}
+              trend={`${SUMMARY.providersGrowth}% this month`}
+              trendUp
+            />
+            <StatCard
+              label="Active bookings"
+              value={formatNumber(SUMMARY.activeBookings)}
+              trend={`${SUMMARY.bookingsToday} today`}
+              trendUp
+            />
+            <StatCard
+              label="Verified providers"
+              value={formatNumber(SUMMARY.verifiedProviders)}
+              trend={`${verifiedPercent}% of providers`}
+            />
           </View>
+
+          {/* Urgent tasks */}
+          <Text style={[styles.sectionTitle, styles.urgentTitle]}>Urgent tasks</Text>
+
+          <TaskCard
+            icon="check"
+            title="Pending verifications"
+            subtitle={`${SUMMARY.newApplicationsToday} new applications today`}
+            badge={String(SUMMARY.pendingVerifications)}
+            actionLabel="Review queue"
+            tone="purple"
+            onPress={() => navigation.navigate("Verification")}
+          />
+          <TaskCard
+            icon="exclamation-thick"
+            title="Open complaints"
+            subtitle={`${SUMMARY.highPriorityComplaints} marked high priority`}
+            badge={`${SUMMARY.openComplaints} cases`}
+            actionLabel="View complaints"
+            tone="red"
+            onPress={() => navigation.navigate("Complaints")}
+          />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
+  screen: {
     flex: 1,
-    backgroundColor: COLORS.secondary,
+    backgroundColor: COLORS.background,
   },
-  container: {
-    padding: 20,
+  scroll: {
+    flex: 1,
   },
-  header: {
+  scrollContent: {
+    paddingBottom: 24,
+  },
+
+  // Hero
+  hero: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+  },
+  heroTop: {
     flexDirection: "row",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+  },
+  heroText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  date: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.78)",
+  },
+  greeting: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    marginTop: 6,
+  },
+  role: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 6,
+  },
+  avatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.22)",
     alignItems: "center",
-    marginBottom: 20,
+    justifyContent: "center",
   },
-  welcomeText: {
+  avatarText: {
     fontSize: 14,
-    color: COLORS.textMuted,
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
-  userName: {
-    fontSize: 22,
-    fontWeight: "bold",
+  attention: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#FFFFFF",
+    marginTop: 20,
+  },
+  heroActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 18,
+  },
+  heroButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.4)",
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  heroButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
+  // Body
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "800",
     color: COLORS.textPrimary,
   },
-  logoutBadge: {
-    backgroundColor: "#FEE2E2",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+  link: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
-  logoutBadgeText: {
-    color: COLORS.error,
-    fontWeight: "bold",
-    fontSize: 13,
-  },
-  banner: {
-    backgroundColor: "#0F172A",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 24,
-  },
-  bannerBadge: {
-    backgroundColor: "#EF4444",
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  bannerBadgeText: {
-    color: COLORS.secondary,
-    fontSize: 11,
-    fontWeight: "bold",
-  },
-  bannerTitle: {
-    color: COLORS.secondary,
-    fontSize: 22,
-    fontWeight: "bold",
-    marginBottom: 6,
-  },
-  bannerSubtitle: {
-    color: "rgba(255, 255, 255, 0.8)",
+  linkText: {
     fontSize: 14,
-    lineHeight: 20,
+    fontWeight: "800",
+    color: COLORS.primary,
   },
-  statsGrid: {
+  grid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
-    marginBottom: 24,
   },
-  statCard: {
-    width: "48%",
-    backgroundColor: COLORS.inputBg,
-    borderRadius: 14,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.inputBorder,
-  },
-  statValue: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: COLORS.primary,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: COLORS.textMuted,
-  },
-  infoCard: {
-    backgroundColor: COLORS.inputBg,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.inputBorder,
-  },
-  infoCardTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-  },
-  infoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: COLORS.textMuted,
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: COLORS.textPrimary,
-  },
-  roleAdmin: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: COLORS.error,
+  urgentTitle: {
+    marginTop: 26,
+    marginBottom: 14,
   },
 });
 

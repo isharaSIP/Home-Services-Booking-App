@@ -1,19 +1,74 @@
 import React from "react";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import AdminDashboard from "../screens/admin/AdminDashboard";
+import { StyleSheet } from "react-native";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { COLORS } from "../constants/theme";
 
-const Stack = createNativeStackNavigator();
+import AdminDashboard from "../screens/admin/AdminDashboard";
+import VerificationScreen from "../screens/admin/VerificationScreen";
+import ComplaintsScreen from "../screens/admin/ComplaintsScreen";
+import UsersScreen from "../screens/admin/UsersScreen";
+import ReportsScreen from "../screens/admin/ReportsScreen";
+
+const Tab = createBottomTabNavigator();
+
+// [route name, label, outline icon, filled icon, screen]
+const TABS = [
+  ["Dashboard", "Dashboard", "view-grid-outline", "view-grid", AdminDashboard],
+  ["Verification", "Verification", "shield-check-outline", "shield-check", VerificationScreen],
+  ["Complaints", "Complaints", "message-alert-outline", "message-alert", ComplaintsScreen],
+  ["Users", "Users", "account-group-outline", "account-group", UsersScreen],
+  ["Reports", "Reports", "chart-bar", "chart-bar", ReportsScreen],
+];
 
 const AdminNavigator = () => {
   return (
-    <Stack.Navigator
+    <Tab.Navigator
+      initialRouteName="Dashboard"
       screenOptions={{
         headerShown: false,
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: COLORS.textMuted,
+        tabBarLabelStyle: styles.label,
+        tabBarStyle: styles.tabBar,
+        tabBarItemStyle: styles.item,
       }}
     >
-      <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
-    </Stack.Navigator>
+      {TABS.map(([name, label, outline, filled, component]) => (
+        <Tab.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{
+            tabBarLabel: label,
+            tabBarIcon: ({ focused, color, size }) => (
+              <MaterialCommunityIcons
+                name={focused ? filled : outline}
+                size={size}
+                color={color}
+              />
+            ),
+          }}
+        />
+      ))}
+    </Tab.Navigator>
   );
 };
+
+const styles = StyleSheet.create({
+  tabBar: {
+    backgroundColor: COLORS.secondary,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.inputBorder,
+    paddingTop: 6,
+  },
+  item: {
+    paddingVertical: 2,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+});
 
 export default AdminNavigator;
