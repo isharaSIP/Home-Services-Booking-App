@@ -40,15 +40,9 @@ const LoginScreen = ({ navigation }) => {
     setLoading(false);
 
     if (result.success) {
-      // Role navigation handled by RootNavigator or direct replace
-      if (result.role === "customer") {
-        navigation.replace("CustomerNavigator");
-      } else if (result.role === "provider") {
-        navigation.replace("ProviderNavigator");
-      } else if (result.role === "admin") {
-        navigation.replace("AdminNavigator");
-      }
-    } else if (result.requiresVerification) {
+      // Nothing to do here: RootNavigator switches to the right
+      // dashboard automatically once the user is set in AuthContext.
+      } else if (result.requiresVerification) {
       Alert.alert(
         "Account Verification Required",
         result.message || "Please verify your account before logging in.",
