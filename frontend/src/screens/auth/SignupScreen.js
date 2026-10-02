@@ -11,7 +11,9 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Image,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { COLORS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
 
@@ -26,13 +28,61 @@ const SignupScreen = ({ navigation }) => {
   const [role, setRole] = useState("customer"); // 'customer' or 'provider'
   const [agreedTerms, setAgreedTerms] = useState(false);
 
-  // Provider specific optional architectural fields
+  // Provider specific details & verification documents
   const [category, setCategory] = useState("");
   const [experience, setExperience] = useState("");
+  const [nicFront, setNicFront] = useState("");
+  const [nicBack, setNicBack] = useState("");
+  const [certificates, setCertificates] = useState([]);
 
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const pickImage = async (target) => {
+    try {
+      const permissionResult =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permissionResult.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Permission to access photo library is required to upload verification documents!"
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.4,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        const base64Str = result.assets[0].base64
+          ? `data:image/jpeg;base64,${result.assets[0].base64}`
+          : imageUri;
+
+        if (target === "nicFront") {
+          setNicFront(base64Str);
+        } else if (target === "nicBack") {
+          setNicBack(base64Str);
+        } else if (target === "cert") {
+          setCertificates((prev) => [...prev, base64Str]);
+        }
+        setErrorMessage("");
+      }
+    } catch (err) {
+      console.error("ImagePicker Error:", err);
+      Alert.alert("Image Error", "Failed to select image. Please try again.");
+    }
+  };
+
+  const removeCertificate = (index) => {
+    setCertificates((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const validateForm = () => {
     if (!name.trim()) return "Full name is required";
@@ -44,6 +94,13 @@ const SignupScreen = ({ navigation }) => {
       return "Password must be at least 6 characters long";
     if (password !== confirmPassword) return "Passwords do not match";
     if (!role) return "Please select account role";
+
+    if (role === "provider") {
+      if (!category.trim()) return "Please select or enter your service category";
+      if (!nicFront) return "NIC Front Image is required for Service Providers";
+      if (!nicBack) return "NIC Back Image is required for Service Providers";
+    }
+
     if (!agreedTerms) return "You must accept the Terms & Conditions to proceed";
     return null;
   };
@@ -70,6 +127,9 @@ const SignupScreen = ({ navigation }) => {
       userData.providerDetails = {
         category: category.trim(),
         experience: experience.trim(),
+        nicFront,
+        nicBack,
+        certificates,
       };
     }
 
@@ -79,7 +139,9 @@ const SignupScreen = ({ navigation }) => {
     if (result.success) {
       Alert.alert(
         "Account Created!",
-        "A 6-digit OTP verification code has been generated. Please check console/logs to verify.",
+        role === "provider"
+          ? "Please verify the OTP code. Note: Your account will require Admin Review before you can log in."
+          : "A 6-digit OTP verification code has been generated.",
         [
           {
             text: "Proceed to Verification",
@@ -224,11 +286,16 @@ const SignupScreen = ({ navigation }) => {
               />
             </View>
 
-            {/* Optional Provider Specific Info */}
+            {/* Provider Verification Fields */}
             {role === "provider" && (
-              <>
+              <View style={styles.providerBox}>
+                <Text style={styles.providerBoxTitle}>
+                  🛠️ Service Provider Verification Details
+                </Text>
+
+                {/* Service Category */}
                 <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Primary Service Category</Text>
+                  <Text style={styles.label}>Service Category *</Text>
                   <TextInput
                     style={styles.input}
                     placeholder="e.g. Plumbing, Electrical, Cleaning"
@@ -237,6 +304,8 @@ const SignupScreen = ({ navigation }) => {
                     onChangeText={setCategory}
                   />
                 </View>
+
+                {/* Experience */}
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Years of Experience</Text>
                   <TextInput
@@ -247,7 +316,108 @@ const SignupScreen = ({ navigation }) => {
                     onChangeText={setExperience}
                   />
                 </View>
-              </>
+
+                {/* NIC Front Image (Required) */}
+                <View style={styles.docUploadGroup}>
+                  <View style={styles.docHeader}>
+                    <Text style={styles.label}>NIC Front Image *</Text>
+                    <Text style={styles.requiredBadge}>REQUIRED</Text>
+                  </View>
+                  {nicFront ? (
+                    <View style={styles.previewContainer}>
+                      <Image
+                        source={{ uri: nicFront }}
+                        style={styles.imagePreview}
+                      />
+                      <TouchableOpacity
+                        style={styles.changeImageBtn}
+                        onPress={() => pickImage("nicFront")}
+                      >
+                        <Text style={styles.changeImageText}>Change Image</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.uploadBtn}
+                      onPress={() => pickImage("nicFront")}
+                    >
+                      <Text style={styles.uploadBtnIcon}>📷</Text>
+                      <Text style={styles.uploadBtnText}>
+                        Upload NIC Front Photo
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* NIC Back Image (Required) */}
+                <View style={styles.docUploadGroup}>
+                  <View style={styles.docHeader}>
+                    <Text style={styles.label}>NIC Back Image *</Text>
+                    <Text style={styles.requiredBadge}>REQUIRED</Text>
+                  </View>
+                  {nicBack ? (
+                    <View style={styles.previewContainer}>
+                      <Image
+                        source={{ uri: nicBack }}
+                        style={styles.imagePreview}
+                      />
+                      <TouchableOpacity
+                        style={styles.changeImageBtn}
+                        onPress={() => pickImage("nicBack")}
+                      >
+                        <Text style={styles.changeImageText}>Change Image</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.uploadBtn}
+                      onPress={() => pickImage("nicBack")}
+                    >
+                      <Text style={styles.uploadBtnIcon}>📷</Text>
+                      <Text style={styles.uploadBtnText}>
+                        Upload NIC Back Photo
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Certifications (Optional) */}
+                <View style={styles.docUploadGroup}>
+                  <View style={styles.docHeader}>
+                    <Text style={styles.label}>Certifications & Documents</Text>
+                    <Text style={styles.optionalBadge}>OPTIONAL</Text>
+                  </View>
+                  
+                  {certificates.length > 0 && (
+                    <View style={styles.certList}>
+                      {certificates.map((cert, idx) => (
+                        <View key={idx} style={styles.certItem}>
+                          <Image
+                            source={{ uri: cert }}
+                            style={styles.certThumb}
+                          />
+                          <TouchableOpacity
+                            style={styles.removeCertBtn}
+                            onPress={() => removeCertificate(idx)}
+                          >
+                            <Text style={styles.removeCertText}>✕ Remove</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.uploadBtnSecondary}
+                    onPress={() => pickImage("cert")}
+                  >
+                    <Text style={styles.uploadBtnIcon}>📜</Text>
+                    <Text style={styles.uploadBtnTextSecondary}>
+                      + Add Certificate Photo (Optional)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
 
             {/* Password */}
@@ -434,6 +604,138 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 15,
     color: COLORS.textPrimary,
+  },
+  providerBox: {
+    backgroundColor: "#F8F7FF",
+    borderWidth: 1.5,
+    borderColor: "#DDD6FE",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+  },
+  providerBoxTitle: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: COLORS.primary,
+    marginBottom: 16,
+  },
+  docUploadGroup: {
+    marginBottom: 18,
+  },
+  docHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  requiredBadge: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: COLORS.error,
+    backgroundColor: "#FEE2E2",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  optionalBadge: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: COLORS.textMuted,
+    backgroundColor: "#E2E8F0",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  uploadBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    borderStyle: "dashed",
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  uploadBtnIcon: {
+    fontSize: 18,
+    marginRight: 8,
+  },
+  uploadBtnText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  uploadBtnSecondary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  uploadBtnTextSecondary: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  previewContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.secondary,
+    borderRadius: 12,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+  },
+  imagePreview: {
+    width: 80,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  changeImageBtn: {
+    backgroundColor: "#F4F0FF",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  changeImageText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "bold",
+  },
+  certList: {
+    gap: 8,
+    marginBottom: 10,
+  },
+  certItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.secondary,
+    borderRadius: 10,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+  },
+  certThumb: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+  removeCertBtn: {
+    backgroundColor: "#FEE2E2",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  removeCertText: {
+    color: COLORS.error,
+    fontSize: 12,
+    fontWeight: "bold",
   },
   passwordContainer: {
     flexDirection: "row",
