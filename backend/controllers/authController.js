@@ -11,6 +11,7 @@ const sanitizeUser = (user) => {
     phone: user.phone,
     role: user.role,
     isVerified: user.isVerified,
+    isApprovedByAdmin: user.isApprovedByAdmin,
     providerDetails: user.providerDetails || {},
   };
 };
@@ -50,9 +51,20 @@ const register = async (req, res) => {
       return res.status(400).json({ message: "An account with this phone number already exists" });
     }
 
+    // Validation for Service Provider NIC requirement
+    if (role === "provider") {
+      if (!providerDetails || !providerDetails.nicFront || !providerDetails.nicBack) {
+        return res.status(400).json({
+          message: "NIC Front and NIC Back images are mandatory for Service Provider registration.",
+        });
+      }
+    }
+
     // Generate 6-digit OTP
     const otp = generateOTP();
     const otpExpires = getOtpExpiry(10); // Valid for 10 minutes
+
+    const isProvider = role === "provider";
 
     const userData = {
       name,
@@ -61,14 +73,23 @@ const register = async (req, res) => {
       password,
       role,
       isVerified: false,
+      isApprovedByAdmin: !isProvider, // Customers are auto-approved by admin, Providers require manual admin verification
       otp,
       otpExpires,
       otpAttempts: 0,
       otpLastSent: new Date(),
     };
 
-    if (role === "provider" && providerDetails) {
-      userData.providerDetails = providerDetails;
+    if (isProvider) {
+      userData.providerDetails = {
+        category: providerDetails?.category || "",
+        experience: providerDetails?.experience || "",
+        qualifications: providerDetails?.qualifications || "",
+        nicFront: providerDetails.nicFront,
+        nicBack: providerDetails.nicBack,
+        certificates: providerDetails?.certificates || [],
+        approvalStatus: "pending",
+      };
     }
 
     const user = await User.create(userData);
@@ -77,9 +98,12 @@ const register = async (req, res) => {
     logOTP(user.email, otp, "Account Registration Verification");
 
     return res.status(201).json({
-      message: "Registration successful. Please verify the OTP sent to your email/phone.",
+      message: isProvider
+        ? "Registration successful. Please verify OTP. Note: Your account will require Admin Approval before logging in."
+        : "Registration successful. Please verify the OTP sent to your email/phone.",
       identifier: user.email,
       role: user.role,
+      requiresAdminApproval: isProvider,
     });
   } catch (error) {
     console.error("Register Error:", error);
@@ -88,7 +112,7 @@ const register = async (req, res) => {
 };
 
 /**
- * @desc    Verify OTP for account activation or password reset
+ * @desc    Verify OTP for account activation
  * @route   POST /api/auth/verify-otp
  * @access  Public
  */
@@ -110,7 +134,15 @@ const verifyOtp = async (req, res) => {
     }
 
     if (user.isVerified) {
-      // User is already verified, issue token directly
+      // Check if provider needs admin approval
+      if (user.role === "provider" && (!user.isApprovedByAdmin || user.providerDetails?.approvalStatus !== "approved")) {
+        return res.status(200).json({
+          message: "Account verified, but awaiting Admin approval before login.",
+          requiresAdminApproval: true,
+          user: sanitizeUser(user),
+        });
+      }
+
       const token = generateToken(user._id, user.role);
       return res.status(200).json({
         message: "Account is already verified",
@@ -146,6 +178,15 @@ const verifyOtp = async (req, res) => {
     user.otpExpires = null;
     user.otpAttempts = 0;
     await user.save();
+
+    // If Service Provider, notify about admin review stage
+    if (user.role === "provider" && (!user.isApprovedByAdmin || user.providerDetails?.approvalStatus !== "approved")) {
+      return res.status(200).json({
+        message: "OTP verified successfully! Your profile & NIC documents are now submitted for Admin Review.",
+        requiresAdminApproval: true,
+        user: sanitizeUser(user),
+      });
+    }
 
     const token = generateToken(user._id, user.role);
 
@@ -238,7 +279,7 @@ const login = async (req, res) => {
       return res.status(401).json({ message: "Invalid email/phone or password" });
     }
 
-    // If account is not verified yet, send a fresh OTP and prompt for verification
+    // If account is not verified via OTP yet
     if (!user.isVerified) {
       const newOtp = generateOTP();
       user.otp = newOtp;
@@ -254,6 +295,29 @@ const login = async (req, res) => {
         requiresVerification: true,
         identifier: user.email,
       });
+    }
+
+    // Check Admin Approval requirement for Service Providers
+    if (user.role === "provider") {
+      if (!user.isApprovedByAdmin || user.providerDetails?.approvalStatus !== "approved") {
+        if (user.providerDetails?.approvalStatus === "rejected") {
+          return res.status(403).json({
+            message: `Your Service Provider account application was rejected by Admin.${
+              user.providerDetails?.rejectionReason
+                ? ` Reason: ${user.providerDetails.rejectionReason}`
+                : ""
+            }`,
+            requiresAdminApproval: true,
+            approvalStatus: "rejected",
+          });
+        }
+
+        return res.status(403).json({
+          message: "Your Service Provider account is currently under Admin Review. You will be able to log in once an administrator approves your NIC & documents.",
+          requiresAdminApproval: true,
+          approvalStatus: "pending",
+        });
+      }
     }
 
     const token = generateToken(user._id, user.role);

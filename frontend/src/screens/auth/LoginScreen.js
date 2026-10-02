@@ -40,21 +40,33 @@ const LoginScreen = ({ navigation }) => {
     setLoading(false);
 
     if (result.success) {
-      // Nothing to do here: RootNavigator switches to the right
-      // dashboard automatically once the user is set in AuthContext.
-      } else if (result.requiresVerification) {
+      // Role navigation handled by RootNavigator or direct replace
+      if (result.role === "customer") {
+        navigation.replace("CustomerNavigator");
+      } else if (result.role === "provider") {
+        navigation.replace("ProviderNavigator");
+      } else if (result.role === "admin") {
+        navigation.replace("AdminNavigator");
+      }
+    } else if (result.requiresVerification) {
       Alert.alert(
         "Account Verification Required",
         result.message || "Please verify your account before logging in.",
         [
           {
-            text: "Verify Now",
+            text: "Verify OTP Now",
             onPress: () =>
               navigation.navigate("OtpVerification", {
                 identifier: result.identifier || identifier.trim(),
               }),
           },
         ]
+      );
+    } else if (result.requiresAdminApproval) {
+      Alert.alert(
+        "🛡️ Admin Review Pending",
+        result.message ||
+          "Your Service Provider account is currently under review by an administrator. You will be able to log in once your NIC & documents are approved."
       );
     } else {
       setErrorMessage(result.message || "Invalid login credentials");
