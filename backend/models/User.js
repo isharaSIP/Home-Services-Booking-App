@@ -35,6 +35,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isApprovedByAdmin: {
+      type: Boolean,
+      default: true, // Customers and Admin default to true, Providers default to false upon registration
+    },
     otp: {
       type: String,
       default: null,
@@ -55,7 +59,15 @@ const userSchema = new mongoose.Schema(
       category: { type: String, default: "" },
       experience: { type: String, default: "" },
       qualifications: { type: String, default: "" },
-      documents: [{ type: String }],
+      nicFront: { type: String, default: "" }, // Base64 or Image URI (Required for Provider)
+      nicBack: { type: String, default: "" },  // Base64 or Image URI (Required for Provider)
+      certificates: [{ type: String }],         // Array of Base64 or Image URIs (Optional)
+      approvalStatus: {
+        type: String,
+        enum: ["pending", "approved", "rejected"],
+        default: "approved",
+      },
+      rejectionReason: { type: String, default: "" },
     },
   },
   {

@@ -81,47 +81,47 @@ const AdminDashboard = ({ navigation }) => {
       <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
       {/* Hero (fixed, does not scroll) */}
       <View style={[styles.hero, { paddingTop: insets.top + 24 }]}>
-          <View style={styles.heroTop}>
-            <View style={styles.heroText}>
-              <Text style={styles.date}>{formatLongDate(now)}</Text>
-              <Text style={styles.greeting}>
-                {getGreeting(now)}, {firstName}
-              </Text>
-              <Text style={styles.role}>Platform Administrator · FixMate LK</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.avatar}
-              onPress={confirmLogout}
-              accessibilityRole="button"
-              accessibilityLabel="Account options, log out"
-            >
-              <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
-            </TouchableOpacity>
+        <View style={styles.heroTop}>
+          <View style={styles.heroText}>
+            <Text style={styles.date}>{formatLongDate(now)}</Text>
+            <Text style={styles.greeting}>
+              {getGreeting(now)}, {firstName}
+            </Text>
+            <Text style={styles.role}>Platform Administrator · FixMate LK</Text>
           </View>
+          <TouchableOpacity
+            style={styles.avatar}
+            onPress={confirmLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Account options, log out"
+          >
+            <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
+          </TouchableOpacity>
+        </View>
 
-          <Text style={styles.attention}>
-            {SUMMARY.pendingVerifications} applications and {SUMMARY.openComplaints}{" "}
-            complaints need your attention today.
-          </Text>
+        <Text style={styles.attention}>
+          {SUMMARY.pendingVerifications} applications and {SUMMARY.openComplaints}{" "}
+          complaints need your attention today.
+        </Text>
 
-          <View style={styles.heroActions}>
-            <TouchableOpacity
-              style={styles.heroButton}
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate("Verification")}
-            >
-              <Text style={styles.heroButtonText}>Review verifications</Text>
-              <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.heroButton}
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate("Complaints")}
-            >
-              <Text style={styles.heroButtonText}>Open complaints</Text>
-              <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+        <View style={styles.heroActions}>
+          <TouchableOpacity
+            style={styles.heroButton}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate("Verification")}
+          >
+            <Text style={styles.heroButtonText}>Review verifications</Text>
+            <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.heroButton}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate("Complaints")}
+          >
+            <Text style={styles.heroButtonText}>Open complaints</Text>
+            <MaterialCommunityIcons name="arrow-top-right" size={14} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Only this area scrolls */}
