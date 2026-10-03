@@ -1,22 +1,43 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   StatusBar,
   StyleSheet,
   Alert,
+  Modal,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Location from "expo-location";
 import { COLORS, SHADOWS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
 
-// ---------------------------------------------------------------------------
-// Placeholder data. Replace with API data when the backend endpoints exist.
-// ---------------------------------------------------------------------------
-const LOCATION = "Nugegoda, Colombo 05";
+// Attempt to import react-native-maps safely
+let MapView = null;
+let Marker = null;
+try {
+  const Maps = require("react-native-maps");
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+} catch (e) {
+  console.log("react-native-maps fallback");
+}
+
+const DEFAULT_REGION = {
+  latitude: 6.9271,
+  longitude: 79.8612,
+  latitudeDelta: 0.05,
+  longitudeDelta: 0.05,
+};
+
 const HAS_UNREAD_NOTIFICATIONS = true;
 
 const CATEGORIES = [
@@ -47,16 +68,118 @@ const getInitials = (name = "") => {
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 };
 
-// ---------------------------------------------------------------------------
-// Screen
-// ---------------------------------------------------------------------------
 const CustomerDashboard = ({ navigation }) => {
-  const { user } = useAuth();
+  const { user, updateUserLocation } = useAuth();
   const insets = useSafeAreaInsets();
   const firstName = (user?.name || "there").trim().split(/\s+/)[0];
 
+  // Update Location Modal State
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [locAddress, setLocAddress] = useState(user?.location?.address || "");
+  const [locCity, setLocCity] = useState(user?.location?.city || "");
+  const [locLat, setLocLat] = useState(user?.location?.latitude || null);
+  const [locLng, setLocLng] = useState(user?.location?.longitude || null);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [gpsFetching, setGpsFetching] = useState(false);
+
+  // Inner Map Modal State
+  const [showInnerMap, setShowInnerMap] = useState(false);
+  const [tempCoords, setTempCoords] = useState(DEFAULT_REGION);
+
   const goExplore = () => navigation.navigate("Explore");
   const comingSoon = (title) => Alert.alert(title, "Coming soon.");
+
+  // Location display string fetched from database session
+  const displayLocation = user?.location?.address
+    ? user?.location?.city
+      ? `${user.location.address}, ${user.location.city}`
+      : user.location.address
+    : user?.location?.city || "Set your location";
+
+  const openLocationModal = () => {
+    setLocAddress(user?.location?.address || "");
+    setLocCity(user?.location?.city || "");
+    setLocLat(user?.location?.latitude || null);
+    setLocLng(user?.location?.longitude || null);
+    setShowLocationModal(true);
+  };
+
+  // GPS Location fetch (coordinates only!)
+  const handleFetchGps = async () => {
+    try {
+      setGpsFetching(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "Location permission was denied.");
+        setGpsFetching(false);
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setLocLat(pos.coords.latitude);
+      setLocLng(pos.coords.longitude);
+      Alert.alert(
+        "GPS Coordinates Saved 📍",
+        `Latitude: ${pos.coords.latitude.toFixed(5)}, Longitude: ${pos.coords.longitude.toFixed(5)}`
+      );
+    } catch (err) {
+      Alert.alert("GPS Error", "Failed to retrieve GPS location.");
+    } finally {
+      setGpsFetching(false);
+    }
+  };
+
+  const openInnerMap = () => {
+    setTempCoords({
+      latitude: locLat || DEFAULT_REGION.latitude,
+      longitude: locLng || DEFAULT_REGION.longitude,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    });
+    // Close the location input modal first so the full-screen Map Modal is presented cleanly without overlay conflicts
+    setShowLocationModal(false);
+    setShowInnerMap(true);
+  };
+
+  const confirmInnerMap = () => {
+    setLocLat(tempCoords.latitude);
+    setLocLng(tempCoords.longitude);
+    setShowInnerMap(false);
+    // Re-open location form modal after map coordinate selection
+    setShowLocationModal(true);
+    Alert.alert(
+      "Map Coordinates Saved 📍",
+      `Latitude: ${tempCoords.latitude.toFixed(5)}, Longitude: ${tempCoords.longitude.toFixed(5)}`
+    );
+  };
+
+  // Save location to MongoDB backend
+  const handleSaveLocation = async () => {
+    if (!locAddress.trim() && !locCity.trim()) {
+      Alert.alert("Input Required", "Please enter your street address or city.");
+      return;
+    }
+
+    try {
+      setSavingLocation(true);
+      const res = await updateUserLocation({
+        address: locAddress.trim(),
+        city: locCity.trim(),
+        latitude: locLat,
+        longitude: locLng,
+      });
+
+      if (res.success) {
+        setShowLocationModal(false);
+        Alert.alert("Success 🎉", "Your location has been updated successfully.");
+      } else {
+        Alert.alert("Update Failed", res.message || "Could not update location.");
+      }
+    } catch (err) {
+      Alert.alert("Error", "Failed to update location.");
+    } finally {
+      setSavingLocation(false);
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -70,22 +193,26 @@ const CustomerDashboard = ({ navigation }) => {
           <View style={styles.heroTop}>
             <View style={styles.heroText}>
               <Text style={styles.greeting}>Hello, {firstName}</Text>
+              
+              {/* Dynamic Location Header fetched from DB */}
               <TouchableOpacity
                 style={styles.locationRow}
-                onPress={() => comingSoon("Change location")}
+                onPress={openLocationModal}
                 accessibilityRole="button"
-                accessibilityLabel={`Location ${LOCATION}`}
+                accessibilityLabel={`Location ${displayLocation}`}
               >
                 <MaterialCommunityIcons
-                  name="map-marker-outline"
-                  size={16}
-                  color="rgba(255,255,255,0.9)"
-                />
-                <Text style={styles.locationText}>{LOCATION}</Text>
-                <MaterialCommunityIcons
-                  name="chevron-right"
+                  name="map-marker"
                   size={18}
-                  color="rgba(255,255,255,0.9)"
+                  color="#FFFFFF"
+                />
+                <Text style={styles.locationText} numberOfLines={1}>
+                  {displayLocation}
+                </Text>
+                <MaterialCommunityIcons
+                  name="chevron-down"
+                  size={18}
+                  color="#FFFFFF"
                 />
               </TouchableOpacity>
             </View>
@@ -215,6 +342,181 @@ const CustomerDashboard = ({ navigation }) => {
           ))}
         </View>
       </ScrollView>
+
+      {/* --------------------------------------------------------------------------- */}
+      {/* UPDATE LOCATION MODAL                                                       */}
+      {/* --------------------------------------------------------------------------- */}
+      <Modal
+        visible={showLocationModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowLocationModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={styles.modalIconCircle}>
+                    <MaterialCommunityIcons name="map-marker-radius" size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalTitle}>Update Your Location</Text>
+                    <Text style={styles.modalSub}>Edit address or select GPS/Map coordinates</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setShowLocationModal(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                >
+                  <MaterialCommunityIcons name="close" size={20} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                style={{ marginVertical: 14 }}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {/* Street Address */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Street Address</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. No. 123, Main Street"
+                    placeholderTextColor="#94A3B8"
+                    value={locAddress}
+                    onChangeText={setLocAddress}
+                  />
+                </View>
+
+                {/* City */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>City / Town</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Colombo 05, Kandy, Galle"
+                    placeholderTextColor="#94A3B8"
+                    value={locCity}
+                    onChangeText={setLocCity}
+                  />
+                </View>
+
+                {/* GPS & Map Buttons */}
+                <View style={styles.locationBtnsRow}>
+                  <TouchableOpacity style={styles.gpsBtn} onPress={handleFetchGps} disabled={gpsFetching}>
+                    {gpsFetching ? (
+                      <ActivityIndicator color={COLORS.primary} size="small" />
+                    ) : (
+                      <>
+                        <MaterialCommunityIcons name="crosshairs-gps" size={18} color={COLORS.primary} />
+                        <Text style={styles.gpsBtnText}>Use Device GPS</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.mapBtn} onPress={openInnerMap}>
+                    <MaterialCommunityIcons name="map-marker-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.mapBtnText}>Choose on Map</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Coordinates Preview */}
+                {locLat && locLng ? (
+                  <View style={styles.coordsPreviewBox}>
+                    <MaterialCommunityIcons name="check-circle" size={18} color={COLORS.success} />
+                    <Text style={styles.coordsPreviewText}>
+                      GPS Pin: {locLat.toFixed(4)}, {locLng.toFixed(4)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Save Button */}
+                <TouchableOpacity
+                  style={styles.saveLocBtn}
+                  onPress={handleSaveLocation}
+                  disabled={savingLocation}
+                >
+                  {savingLocation ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveLocBtnText}>Save Location</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* --------------------------------------------------------------------------- */}
+      {/* INNER MAP PICKER MODAL                                                      */}
+      {/* --------------------------------------------------------------------------- */}
+      <Modal
+        visible={showInnerMap}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowInnerMap(false);
+          setShowLocationModal(true);
+        }}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.secondary }}>
+          {/* Header */}
+          <View style={styles.innerMapHeader}>
+            <TouchableOpacity
+              style={styles.innerMapCloseBtn}
+              onPress={() => {
+                setShowInnerMap(false);
+                setShowLocationModal(true);
+              }}
+            >
+              <MaterialCommunityIcons name="close" size={22} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.innerMapTitle}>Select Pin Coordinates</Text>
+              <Text style={styles.innerMapSub}>Tap map to position pin</Text>
+            </View>
+          </View>
+
+          {/* Map View */}
+          <View style={{ flex: 1, backgroundColor: "#F1F5F9" }}>
+            {MapView ? (
+              <MapView
+                style={{ width: "100%", height: "100%" }}
+                region={tempCoords}
+                onPress={(e) => {
+                  const c = e.nativeEvent?.coordinate || tempCoords;
+                  setTempCoords((prev) => ({ ...prev, latitude: c.latitude, longitude: c.longitude }));
+                }}
+              >
+                <Marker coordinate={{ latitude: tempCoords.latitude, longitude: tempCoords.longitude }} />
+              </MapView>
+            ) : (
+              <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                <MaterialCommunityIcons name="map-marker" size={54} color={COLORS.primary} />
+                <Text style={{ fontSize: 16, fontWeight: "700", marginTop: 10 }}>Map Pin Selector</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Footer Controls */}
+          <SafeAreaView edges={["bottom"]} style={{ backgroundColor: COLORS.secondary }}>
+            <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: COLORS.inputBorder }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: COLORS.textPrimary, marginBottom: 12 }}>
+                Coordinates: {tempCoords.latitude.toFixed(5)}, {tempCoords.longitude.toFixed(5)}
+              </Text>
+              <TouchableOpacity style={styles.saveLocBtn} onPress={confirmInnerMap}>
+                <Text style={styles.saveLocBtnText}>Confirm Coordinates</Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 };
@@ -253,11 +555,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
     alignSelf: "flex-start",
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 4,
   },
   locationText: {
     fontSize: 13,
-    color: "rgba(255,255,255,0.92)",
-    marginLeft: 4,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    maxWidth: 220,
   },
   bell: {
     width: 44,
@@ -461,6 +769,174 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     color: "#B25E09",
+  },
+
+  // Location Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: COLORS.secondary,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: "90%",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.inputBorder,
+  },
+  modalHeaderTitleRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingRight: 10,
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  modalSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  input: {
+    backgroundColor: COLORS.inputBg,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+  locationBtnsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  gpsBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F4F0FF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+    borderRadius: 12,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  gpsBtnText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  mapBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  mapBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  coordsPreviewBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DDF5EA",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
+    gap: 6,
+  },
+  coordsPreviewText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.success,
+  },
+  saveLocBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveLocBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  innerMapHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.inputBorder,
+    backgroundColor: COLORS.secondary,
+  },
+  innerMapCloseBtn: {
+    padding: 6,
+    marginRight: 10,
+  },
+  innerMapTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  innerMapSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
   },
 });
 

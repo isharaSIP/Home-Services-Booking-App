@@ -45,12 +45,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (identifier, password) => {
-    setIsLoading(true);
     try {
       const data = await authService.login(identifier, password);
       
       if (data.requiresVerification) {
-        setIsLoading(false);
         return { success: false, requiresVerification: true, identifier: data.identifier, message: data.message };
       }
 
@@ -58,13 +56,10 @@ export const AuthProvider = ({ children }) => {
         setToken(data.token);
         setUser(data.user);
         await authService.saveSession(data.token, data.user);
-        setIsLoading(false);
         return { success: true, user: data.user, role: data.user.role };
       }
-      setIsLoading(false);
       return { success: false, message: data.message || "Login failed" };
     } catch (error) {
-      setIsLoading(false);
       const msg = error.response?.data?.message || "Invalid credentials or connection error";
       const isUnverified = error.response?.data?.requiresVerification;
       const unverifiedIdentifier = error.response?.data?.identifier;
@@ -88,20 +83,22 @@ export const AuthProvider = ({ children }) => {
   };
 
   const verifyOTP = async (identifier, otp) => {
-    setIsLoading(true);
     try {
       const data = await authService.verifyOTP(identifier, otp);
       if (data.token && data.user) {
         setToken(data.token);
         setUser(data.user);
         await authService.saveSession(data.token, data.user);
-        setIsLoading(false);
-        return { success: true, user: data.user, role: data.user.role };
+        return { success: true, user: data.user, role: data.user.role, message: data.message };
       }
-      setIsLoading(false);
-      return { success: true, message: data.message };
+      return {
+        success: true,
+        message: data.message,
+        requiresAdminApproval: data.requiresAdminApproval,
+        user: data.user,
+        role: data.user?.role,
+      };
     } catch (error) {
-      setIsLoading(false);
       const msg = error.response?.data?.message || "OTP verification failed";
       return { success: false, message: msg };
     }
@@ -147,6 +144,30 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const updateUserLocation = async (locationData) => {
+    try {
+      const res = await authService.updateLocation(locationData);
+      if (res && res.user) {
+        setUser(res.user);
+        if (token) {
+          await authService.saveSession(token, res.user);
+        }
+        return { success: true, user: res.user };
+      }
+      return { success: false, message: "Failed to update location" };
+    } catch (error) {
+      const msg = error.response?.data?.message || "Error updating location";
+      return { success: false, message: msg };
+    }
+  };
+
+  const updateUserSession = async (updatedUser) => {
+    setUser(updatedUser);
+    if (token) {
+      await authService.saveSession(token, updatedUser);
+    }
+  };
+
   const logout = async () => {
     setIsLoading(true);
     await authService.clearSession();
@@ -170,6 +191,8 @@ export const AuthProvider = ({ children }) => {
         forgotPassword,
         verifyResetOTP,
         resetPassword,
+        updateUserSession,
+        updateUserLocation,
         logout,
         checkAuthState,
       }}

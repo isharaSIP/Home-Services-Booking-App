@@ -9,6 +9,7 @@ import VerificationScreen from "../screens/admin/VerificationScreen";
 import ComplaintsScreen from "../screens/admin/ComplaintsScreen";
 import UsersScreen from "../screens/admin/UsersScreen";
 import ReportsScreen from "../screens/admin/ReportsScreen";
+import AdminProfileScreen from "../screens/admin/AdminProfileScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -51,6 +52,13 @@ const AdminNavigator = () => {
           }}
         />
       ))}
+      <Tab.Screen
+        name="AdminProfile"
+        component={AdminProfileScreen}
+        options={{
+          tabBarItemStyle: { display: "none" },
+        }}
+      />
     </Tab.Navigator>
   );
 };
