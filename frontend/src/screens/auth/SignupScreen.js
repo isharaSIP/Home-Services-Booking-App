@@ -12,10 +12,32 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { COLORS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
+
+// Attempt to import react-native-maps safely
+let MapView = null;
+let Marker = null;
+try {
+  const Maps = require("react-native-maps");
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+} catch (e) {
+  console.log("react-native-maps not natively supported in this environment, using interactive pin picker fallback.");
+}
+
+// Default initial map region (Colombo, Sri Lanka)
+const DEFAULT_REGION = {
+  latitude: 6.9271,
+  longitude: 79.8612,
+  latitudeDelta: 0.05,
+  longitudeDelta: 0.05,
+};
 
 const SignupScreen = ({ navigation }) => {
   const { register } = useAuth();
@@ -28,6 +50,56 @@ const SignupScreen = ({ navigation }) => {
   const [role, setRole] = useState("customer"); // 'customer' or 'provider'
   const [agreedTerms, setAgreedTerms] = useState(false);
 
+  // Location State
+  const [location, setLocation] = useState({
+    address: "",
+    city: "",
+    district: "",
+    latitude: null,
+    longitude: null,
+  });
+  const [locationFetching, setLocationFetching] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
+
+  // Temporary location state during Map Modal interaction
+  const [tempCoords, setTempCoords] = useState(DEFAULT_REGION);
+  const [tempAddress, setTempAddress] = useState("");
+  const [tempCity, setTempCity] = useState("");
+  const [mapGeocoding, setMapGeocoding] = useState(false);
+
+  // Map Location Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+
+  const handleSearchLocation = async (overrideQuery) => {
+    const q = (typeof overrideQuery === "string" ? overrideQuery : searchQuery).trim();
+    if (!q) return;
+
+    try {
+      setSearchLoading(true);
+      setSearchError("");
+
+      const results = await Location.geocodeAsync(q);
+      if (results && results.length > 0) {
+        const { latitude, longitude } = results[0];
+        setTempCoords({
+          latitude,
+          longitude,
+          latitudeDelta: 0.04,
+          longitudeDelta: 0.04,
+        });
+      } else {
+        setSearchError(`No coordinates found for "${q}". Try another location.`);
+      }
+    } catch (err) {
+      console.error("Geocode Search Error:", err);
+      setSearchError("Failed to search location. Please check spelling or internet.");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
   // Provider specific details & verification documents
   const [category, setCategory] = useState("");
   const [experience, setExperience] = useState("");
@@ -39,10 +111,94 @@ const SignupScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // ---------------------------------------------------------------------------
+  // Location Handlers (Fetch ONLY Latitude & Longitude)
+  // ---------------------------------------------------------------------------
+  const handleFetchCurrentLocation = async () => {
+    try {
+      setLocationFetching(true);
+      setErrorMessage("");
+
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Required",
+          "Permission to access device GPS location was denied. Please select your location on the map instead."
+        );
+        setLocationFetching(false);
+        return;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const { latitude, longitude } = pos.coords;
+
+      // Only set latitude and longitude. Address is taken strictly from user's text input!
+      setLocation((prev) => ({
+        ...prev,
+        latitude,
+        longitude,
+      }));
+
+      Alert.alert(
+        "GPS Coordinates Saved 📍",
+        `Latitude: ${latitude.toFixed(5)}, Longitude: ${longitude.toFixed(5)}`
+      );
+    } catch (err) {
+      console.error("GPS Fetch Error:", err);
+      Alert.alert(
+        "Location Fetch Failed",
+        "Unable to retrieve phone location. Please tap 'Choose on Map' to select coordinates manually."
+      );
+    } finally {
+      setLocationFetching(false);
+    }
+  };
+
+  const openMapPicker = () => {
+    const initialLat = location.latitude || DEFAULT_REGION.latitude;
+    const initialLng = location.longitude || DEFAULT_REGION.longitude;
+
+    setTempCoords({
+      latitude: initialLat,
+      longitude: initialLng,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    });
+    setShowMapModal(true);
+  };
+
+  const handleMapPress = (e) => {
+    const coords = e.nativeEvent?.coordinate || tempCoords;
+    setTempCoords((prev) => ({
+      ...prev,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    }));
+  };
+
+  const confirmMapLocation = () => {
+    // Only set latitude and longitude from Map. Address is taken strictly from user's text input!
+    setLocation((prev) => ({
+      ...prev,
+      latitude: tempCoords.latitude,
+      longitude: tempCoords.longitude,
+    }));
+    setShowMapModal(false);
+    setErrorMessage("");
+    Alert.alert(
+      "Map Coordinates Saved 📍",
+      `Latitude: ${tempCoords.latitude.toFixed(5)}, Longitude: ${tempCoords.longitude.toFixed(5)}`
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // Document Uploads
+  // ---------------------------------------------------------------------------
   const pickImage = async (target) => {
     try {
-      const permissionResult =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permissionResult.granted) {
         Alert.alert(
@@ -84,12 +240,17 @@ const SignupScreen = ({ navigation }) => {
     setCertificates((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // ---------------------------------------------------------------------------
+  // Validation & Submit
+  // ---------------------------------------------------------------------------
   const validateForm = () => {
     if (!name.trim()) return "Full name is required";
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email))
       return "Please enter a valid email address";
     if (!phone.trim() || phone.trim().length < 8)
       return "Please enter a valid phone number";
+    if (!location.address && !location.city)
+      return "Please set your location via GPS or Map";
     if (!password || password.length < 6)
       return "Password must be at least 6 characters long";
     if (password !== confirmPassword) return "Passwords do not match";
@@ -121,6 +282,7 @@ const SignupScreen = ({ navigation }) => {
       phone: phone.trim(),
       password,
       role,
+      location,
     };
 
     if (role === "provider") {
@@ -167,6 +329,7 @@ const SignupScreen = ({ navigation }) => {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
           <View style={styles.headerContainer}>
@@ -275,7 +438,7 @@ const SignupScreen = ({ navigation }) => {
               <Text style={styles.label}>Phone Number</Text>
               <TextInput
                 style={styles.input}
-                placeholder="+1 234 567 8900"
+                placeholder="+94 77 123 4567"
                 placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
                 value={phone}
@@ -284,6 +447,89 @@ const SignupScreen = ({ navigation }) => {
                   setErrorMessage("");
                 }}
               />
+            </View>
+
+            {/* Location Section (Address Input + GPS + Map Picker) */}
+            <View style={styles.locationSection}>
+              <Text style={styles.label}>Location & Address *</Text>
+              
+              {/* Direct Street Address Input */}
+              <View style={styles.inputGroup}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Street Address (e.g. No. 123, Main Street)"
+                  placeholderTextColor="#94A3B8"
+                  value={location.address}
+                  onChangeText={(text) => {
+                    setLocation((prev) => ({ ...prev, address: text }));
+                    setErrorMessage("");
+                  }}
+                />
+              </View>
+
+              {/* Direct City Input */}
+              <View style={styles.inputGroup}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="City / Town (e.g. Colombo 03, Kandy, Galle)"
+                  placeholderTextColor="#94A3B8"
+                  value={location.city}
+                  onChangeText={(text) => {
+                    setLocation((prev) => ({ ...prev, city: text }));
+                    setErrorMessage("");
+                  }}
+                />
+              </View>
+
+              {/* Action Buttons for Auto-detecting via GPS or Picking via Map */}
+              <View style={styles.locationButtonsRow}>
+                {/* GPS Location Button */}
+                <TouchableOpacity
+                  style={styles.gpsBtn}
+                  onPress={handleFetchCurrentLocation}
+                  disabled={locationFetching}
+                >
+                  {locationFetching ? (
+                    <ActivityIndicator color={COLORS.primary} size="small" />
+                  ) : (
+                    <>
+                      <MaterialCommunityIcons name="crosshairs-gps" size={18} color={COLORS.primary} />
+                      <Text style={styles.gpsBtnText}>Use Device GPS</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                {/* Map Picker Button */}
+                <TouchableOpacity
+                  style={styles.mapBtn}
+                  onPress={openMapPicker}
+                >
+                  <MaterialCommunityIcons name="map-marker-radius" size={18} color="#FFFFFF" />
+                  <Text style={styles.mapBtnText}>Choose on Map</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Selected Location Summary Box */}
+              {(location.address || location.city) ? (
+                <View style={styles.selectedLocBox}>
+                  <View style={styles.locCheckIcon}>
+                    <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.success} />
+                  </View>
+                  <View style={styles.locTextGroup}>
+                    <Text style={styles.locAddressText} numberOfLines={2}>
+                      {location.address || "Address set"}
+                    </Text>
+                    {!!location.city && (
+                      <Text style={styles.locCityText}>City: {location.city}</Text>
+                    )}
+                    {location.latitude && location.longitude ? (
+                      <Text style={styles.locCoordsText}>
+                        GPS Pin: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
             </View>
 
             {/* Provider Verification Fields */}
@@ -506,6 +752,179 @@ const SignupScreen = ({ navigation }) => {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* --------------------------------------------------------------------------- */}
+      {/* INTERACTIVE MAP LOCATION PICKER MODAL                                       */}
+      {/* --------------------------------------------------------------------------- */}
+      <Modal
+        visible={showMapModal}
+        animationType="slide"
+        onRequestClose={() => setShowMapModal(false)}
+      >
+        <SafeAreaView style={styles.mapModalArea}>
+          {/* Modal Header */}
+          <View style={styles.mapHeader}>
+            <TouchableOpacity
+              style={styles.mapCloseBtn}
+              onPress={() => setShowMapModal(false)}
+            >
+              <MaterialCommunityIcons name="close" size={24} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+            <View style={styles.mapTitleGroup}>
+              <Text style={styles.mapTitle}>Choose Location on Map</Text>
+              <Text style={styles.mapSub}>Tap on the map or drag the pin to set location</Text>
+            </View>
+          </View>
+
+          {/* Map View / Interactive Pin Container */}
+          <View style={styles.mapContainer}>
+            {/* Floating Search Bar Bar Overlay */}
+            <View style={styles.mapSearchBarContainer}>
+              <View style={styles.mapSearchInputWrap}>
+                <MaterialCommunityIcons name="magnify" size={20} color={COLORS.textMuted} />
+                <TextInput
+                  style={styles.mapSearchInput}
+                  placeholder="Search city, area, or address (e.g. Kandy)"
+                  placeholderTextColor={COLORS.disabledText}
+                  value={searchQuery}
+                  onChangeText={(text) => {
+                    setSearchQuery(text);
+                    if (searchError) setSearchError("");
+                  }}
+                  onSubmitEditing={() => handleSearchLocation()}
+                  returnKeyType="search"
+                />
+                {searchQuery ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSearchQuery("");
+                      setSearchError("");
+                    }}
+                    style={{ padding: 4 }}
+                  >
+                    <MaterialCommunityIcons name="close-circle" size={18} color={COLORS.disabledText} />
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.mapSearchSubmitBtn}
+                  onPress={() => handleSearchLocation()}
+                  disabled={searchLoading}
+                >
+                  {searchLoading ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.mapSearchSubmitText}>Search</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick City Chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.cityChipsRow}
+              >
+                {["Colombo", "Kandy", "Galle", "Negombo", "Jaffna", "Kurunegala"].map((city) => (
+                  <TouchableOpacity
+                    key={city}
+                    style={styles.cityChip}
+                    onPress={() => {
+                      setSearchQuery(city);
+                      handleSearchLocation(city);
+                    }}
+                  >
+                    <MaterialCommunityIcons name="map-marker" size={13} color={COLORS.primary} />
+                    <Text style={styles.cityChipText}>{city}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {searchError ? (
+                <View style={styles.searchErrorBox}>
+                  <Text style={styles.searchErrorText}>{searchError}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {MapView ? (
+              <MapView
+                style={styles.mapElement}
+                region={tempCoords}
+                onPress={handleMapPress}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: tempCoords.latitude,
+                    longitude: tempCoords.longitude,
+                  }}
+                  title="Selected Location"
+                  description={tempAddress}
+                  draggable
+                  onDragEnd={handleMapPress}
+                />
+              </MapView>
+            ) : (
+              /* Fallback Pin Location View if native map is unavailable */
+              <View style={styles.mapFallbackContainer}>
+                <MaterialCommunityIcons name="map-marker-check" size={54} color={COLORS.primary} />
+                <Text style={styles.fallbackTitle}>Interactive Location Pin</Text>
+                <Text style={styles.fallbackSub}>
+                  Enter or edit city & street details below:
+                </Text>
+
+                <View style={styles.fallbackInputWrap}>
+                  <Text style={styles.fallbackLabel}>City / Area Name</Text>
+                  <TextInput
+                    style={styles.fallbackInput}
+                    value={tempCity}
+                    onChangeText={setTempCity}
+                    placeholder="e.g. Colombo 03, Kandy, Galle"
+                  />
+                </View>
+
+                <View style={styles.fallbackInputWrap}>
+                  <Text style={styles.fallbackLabel}>Street / Full Address</Text>
+                  <TextInput
+                    style={styles.fallbackInput}
+                    value={tempAddress}
+                    onChangeText={setTempAddress}
+                    placeholder="e.g. Main Street, House No. 45"
+                  />
+                </View>
+              </View>
+            )}
+
+            {mapGeocoding && (
+              <View style={styles.geocodingOverlay}>
+                <ActivityIndicator color={COLORS.primary} />
+                <Text style={styles.geocodingText}>Resolving address details...</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Location Summary Footer */}
+          <View style={styles.mapFooter}>
+            <View style={styles.mapFooterAddressBox}>
+              <MaterialCommunityIcons name="map-marker-account" size={22} color={COLORS.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.mapFooterTitle}>
+                  Selected Coordinates
+                </Text>
+                <Text style={styles.mapFooterAddress} numberOfLines={2}>
+                  Lat: {tempCoords.latitude.toFixed(5)}, Lng: {tempCoords.longitude.toFixed(5)}
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.confirmMapBtn}
+              onPress={confirmMapLocation}
+            >
+              <Text style={styles.confirmMapBtnText}>Confirm Pin Coordinates</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -605,6 +1024,81 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: COLORS.textPrimary,
   },
+
+  // Location Styles
+  locationSection: {
+    marginBottom: 20,
+  },
+  locationButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  gpsBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F4F0FF",
+    borderWidth: 1.5,
+    borderColor: "#DDD6FE",
+    borderRadius: 12,
+    paddingVertical: 14,
+    gap: 6,
+  },
+  gpsBtnText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  mapBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    gap: 6,
+  },
+  mapBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  selectedLocBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DDF5EA",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 12,
+  },
+  locCheckIcon: {
+    marginRight: 10,
+  },
+  locTextGroup: {
+    flex: 1,
+  },
+  locAddressText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+  },
+  locCityText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  locCoordsText: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+
   providerBox: {
     backgroundColor: "#F8F7FF",
     borderWidth: 1.5,
@@ -826,6 +1320,226 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 14,
     fontWeight: "bold",
+  },
+
+  // Map Modal Styles
+  mapModalArea: {
+    flex: 1,
+    backgroundColor: COLORS.secondary,
+  },
+  mapHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.inputBorder,
+  },
+  mapCloseBtn: {
+    padding: 6,
+    marginRight: 10,
+  },
+  mapTitleGroup: {
+    flex: 1,
+  },
+  mapTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  mapSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  mapContainer: {
+    flex: 1,
+    backgroundColor: "#F1F5F9",
+    position: "relative",
+  },
+  mapSearchBarContainer: {
+    position: "absolute",
+    top: 12,
+    left: 14,
+    right: 14,
+    zIndex: 20,
+  },
+  mapSearchInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 48,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 8,
+  },
+  mapSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.textPrimary,
+    paddingVertical: 0,
+  },
+  mapSearchSubmitBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  mapSearchSubmitText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  cityChipsRow: {
+    flexDirection: "row",
+    gap: 6,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  cityChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cityChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+  },
+  searchErrorBox: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: COLORS.error,
+  },
+  searchErrorText: {
+    color: COLORS.error,
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  mapElement: {
+    width: "100%",
+    height: "100%",
+  },
+  mapFallbackContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  fallbackTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginTop: 12,
+  },
+  fallbackSub: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginTop: 4,
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  fallbackInputWrap: {
+    width: "100%",
+    marginBottom: 14,
+  },
+  fallbackLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  fallbackInput: {
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+  geocodingOverlay: {
+    position: "absolute",
+    top: 16,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.92)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    gap: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  geocodingText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.textPrimary,
+  },
+  mapFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.inputBorder,
+    backgroundColor: COLORS.secondary,
+  },
+  mapFooterAddressBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 14,
+  },
+  mapFooterTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  mapFooterAddress: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  confirmMapBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  confirmMapBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "800",
   },
 });
 

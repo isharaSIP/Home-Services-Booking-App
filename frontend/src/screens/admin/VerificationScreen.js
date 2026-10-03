@@ -424,7 +424,7 @@ const VerificationScreen = () => {
                           source={{ uri: selectedProvider.providerDetails.nicFront }}
                           style={styles.docImage}
                         />
-                        <Text style={styles.zoomHint}>🔍 Tap to view full size</Text>
+                        {/* <Text style={styles.zoomHint}>🔍 Tap to view full size</Text> */}
                       </TouchableOpacity>
                     ) : (
                       <View style={styles.missingBox}>
@@ -450,7 +450,7 @@ const VerificationScreen = () => {
                           source={{ uri: selectedProvider.providerDetails.nicBack }}
                           style={styles.docImage}
                         />
-                        <Text style={styles.zoomHint}>🔍 Tap to view full size</Text>
+                        {/* <Text style={styles.zoomHint}>🔍 Tap to view full size</Text> */}
                       </TouchableOpacity>
                     ) : (
                       <View style={styles.missingBox}>

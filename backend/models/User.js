@@ -69,6 +69,13 @@ const userSchema = new mongoose.Schema(
       },
       rejectionReason: { type: String, default: "" },
     },
+    location: {
+      address: { type: String, default: "" },
+      city: { type: String, default: "" },
+      district: { type: String, default: "" },
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+    },
   },
   {
     timestamps: true,

@@ -61,7 +61,7 @@ const getInitials = (name = "") =>
 const formatNumber = (n) => n.toLocaleString("en-US");
 
 const AdminDashboard = ({ navigation }) => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   const now = useMemo(() => new Date(), []);
@@ -69,12 +69,6 @@ const AdminDashboard = ({ navigation }) => {
   const verifiedPercent = Math.round(
     (SUMMARY.verifiedProviders / SUMMARY.serviceProviders) * 100
   );
-
-  const confirmLogout = () =>
-    Alert.alert("Log out", "Do you want to log out of the admin account?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log out", style: "destructive", onPress: logout },
-    ]);
 
   return (
     <View style={styles.screen}>
@@ -89,13 +83,14 @@ const AdminDashboard = ({ navigation }) => {
             </Text>
             <Text style={styles.role}>Platform Administrator · FixMate LK</Text>
           </View>
+          {/* Profile Icon Button */}
           <TouchableOpacity
             style={styles.avatar}
-            onPress={confirmLogout}
+            onPress={() => navigation.navigate("AdminProfile")}
             accessibilityRole="button"
-            accessibilityLabel="Account options, log out"
+            accessibilityLabel="Admin Profile"
           >
-            <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
+            <MaterialCommunityIcons name="account-cog-outline" size={26} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
