@@ -1,5 +1,5 @@
-import React, { createContext, useState, useEffect, useContext } from "react";
-import authService from "../services/authService";
+import React, { createContext, useState, useEffect, useContext, useCallback } from "react";
+import { authService } from "../services/authService";
 import { getSecureItem } from "../utils/storage";
 
 const AuthContext = createContext();
@@ -9,62 +9,41 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load stored authentication state on application boot
-  useEffect(() => {
-    checkAuthState();
+  // Only restoring a session may replace the navigator with the startup loader.
+  // Login/OTP screens own their request spinners and must stay mounted on failure.
+  const checkAuthState = useCallback(() => {
+    return getSecureItem("userToken").then(async (storedToken) => {
+      if (!storedToken) return;
+      const res = await authService.getMe();
+      if (!res?.user) throw new Error("Invalid session response");
+      await authService.saveSession(storedToken, res.user);
+      setUser(res.user);
+      setToken(storedToken);
+    }).catch(async () => {
+      await authService.clearSession();
+      setToken(null);
+      setUser(null);
+    }).finally(() => setIsLoading(false));
   }, []);
 
-  const checkAuthState = async () => {
-    try {
-      setIsLoading(true);
-      const storedToken = await getSecureItem("userToken");
-      const storedUser = await getSecureItem("userData");
-
-      if (storedToken && storedUser) {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-
-        // Optionally verify token freshness with backend
-        try {
-          const res = await authService.getMe();
-          if (res && res.user) {
-            setUser(res.user);
-            await authService.saveSession(storedToken, res.user);
-          }
-        } catch (err) {
-          // If token expired or invalid, clear session
-          console.log("Session verification failed, logging out:", err.message);
-          await logout();
-        }
-      }
-    } catch (error) {
-      console.error("Error loading auth state:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  useEffect(() => { void checkAuthState(); }, [checkAuthState]);
 
   const login = async (identifier, password) => {
-    setIsLoading(true);
     try {
       const data = await authService.login(identifier, password);
       
       if (data.requiresVerification) {
-        setIsLoading(false);
         return { success: false, requiresVerification: true, identifier: data.identifier, message: data.message };
       }
 
       if (data.token && data.user) {
+        await authService.saveSession(data.token, data.user);
         setToken(data.token);
         setUser(data.user);
-        await authService.saveSession(data.token, data.user);
-        setIsLoading(false);
         return { success: true, user: data.user, role: data.user.role };
       }
-      setIsLoading(false);
-      return { success: false, message: data.message || "Login failed" };
+      return { success: false, requiresAdminApproval: data.requiresAdminApproval, approvalStatus: data.approvalStatus, message: data.message || "Login failed" };
     } catch (error) {
-      setIsLoading(false);
       const msg = error.response?.data?.message || "Invalid credentials or connection error";
       const isUnverified = error.response?.data?.requiresVerification;
       const unverifiedIdentifier = error.response?.data?.identifier;
@@ -72,6 +51,8 @@ export const AuthProvider = ({ children }) => {
         success: false,
         requiresVerification: isUnverified,
         identifier: unverifiedIdentifier,
+        requiresAdminApproval: error.response?.data?.requiresAdminApproval,
+        approvalStatus: error.response?.data?.approvalStatus,
         message: msg,
       };
     }
@@ -88,20 +69,16 @@ export const AuthProvider = ({ children }) => {
   };
 
   const verifyOTP = async (identifier, otp) => {
-    setIsLoading(true);
     try {
       const data = await authService.verifyOTP(identifier, otp);
       if (data.token && data.user) {
+        await authService.saveSession(data.token, data.user);
         setToken(data.token);
         setUser(data.user);
-        await authService.saveSession(data.token, data.user);
-        setIsLoading(false);
         return { success: true, user: data.user, role: data.user.role };
       }
-      setIsLoading(false);
-      return { success: true, message: data.message };
+      return { success: true, requiresAdminApproval: data.requiresAdminApproval, message: data.message };
     } catch (error) {
-      setIsLoading(false);
       const msg = error.response?.data?.message || "OTP verification failed";
       return { success: false, message: msg };
     }
@@ -148,11 +125,9 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    setIsLoading(true);
     await authService.clearSession();
     setToken(null);
     setUser(null);
-    setIsLoading(false);
   };
 
   return (

@@ -59,6 +59,16 @@ const userSchema = new mongoose.Schema(
       category: { type: String, default: "" },
       experience: { type: String, default: "" },
       qualifications: { type: String, default: "" },
+      bio: { type: String, default: "", maxlength: 2000 },
+      serviceArea: { type: String, default: "" },
+      // Public service location, not a customer's address.
+      latitude: { type: Number, min: -90, max: 90, default: null },
+      longitude: { type: Number, min: -180, max: 180, default: null },
+      price: { type: Number, min: 0, default: null },
+      priceUnit: { type: String, enum: ["visit", "hour", "session", "appliance"], default: "visit" },
+      rating: { type: Number, min: 0, max: 5, default: null },
+      reviewCount: { type: Number, min: 0, default: 0 },
+      nextAvailableAt: { type: Date, default: null },
       nicFront: { type: String, default: "" }, // Base64 or Image URI (Required for Provider)
       nicBack: { type: String, default: "" },  // Base64 or Image URI (Required for Provider)
       certificates: [{ type: String }],         // Array of Base64 or Image URIs (Optional)
