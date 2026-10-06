@@ -1,88 +1,94 @@
-import React from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import React, { useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { availabilityLabel } from '../../utils/exploreProviders';
+import { BookingFlowModal } from './BookingsScreen';
 
-const verifiedIcon = require('../../../assets/images/explore/imgSvg2.svg');
-const starIcon = require('../../../assets/images/explore/imgSvg3.svg');
-
-function Section({ title, children }) {
-  return <View style={styles.card}><Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>{children}</View>;
+const purple = '#7047FA';
+const Icon = ({ name, color = purple, size = 22 }) => <MaterialCommunityIcons name={name} color={color} size={size} />;
+function Section({ title, detail, children }) {
+  return <View style={styles.section}><View style={styles.sectionHeading}><Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>{detail && <Text style={styles.caption}>{detail}</Text>}</View>{children}</View>;
+}
+function InfoRow({ icon, title, description, verified }) {
+  return <View style={styles.infoRow}><View style={[styles.iconBox, verified && styles.check]}><Icon name={icon} color={verified ? '#078765' : purple} size={verified ? 18 : 24} /></View><View style={styles.flex}><Text style={styles.rowTitle}>{title}</Text>{!!description && <Text style={styles.body}>{description}</Text>}</View></View>;
 }
 
-// Public directory data only: never render account documents or earnings here.
-export default function ProviderProfileModal({ visible, provider, loading, error, onClose, onRetry }) {
+export default function ProviderProfileModal({ visible, provider: p, loading, error, onClose, onRetry, onTrackBookings }) {
   const insets = useSafeAreaInsets();
-  const p = provider;
+  const [shareError, setShareError] = useState('');
+  const [showAvailability, setShowAvailability] = useState(false);
   const initials = (p?.name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
-  return <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
+  const close = () => { setShowAvailability(false); setShareError(''); onClose(); };
+  async function share() {
+    setShareError('');
+    try { await Share.share({ message: [p.name, p.category, p.serviceArea, 'Find this professional in FixMate Explore.'].filter(Boolean).join(' · ') }); }
+    catch { setShareError('Sharing is unavailable on this device. Please try again.'); }
+  }
+  if (visible && showAvailability && p) return <BookingFlowModal provider={p} onClose={() => setShowAvailability(false)} onTrack={() => { setShowAvailability(false); onClose(); onTrackBookings?.(); }} />;
+  return <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
     <View style={[styles.screen, { paddingTop: insets.top }]} accessibilityViewIsModal>
-      <View style={styles.header}>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Back to Explore" style={styles.back}><Text style={styles.backText}>‹</Text></Pressable>
-        <Text accessibilityRole="header" style={styles.title}>Provider profile</Text>
-      </View>
-      {loading ? <View style={styles.state}><ActivityIndicator size="large" color="#7047FF" /><Text style={styles.muted}>Loading profile…</Text></View> : error ? <View style={styles.state}><Text accessibilityRole="alert" style={styles.body}>{error}</Text><Pressable onPress={onRetry} accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Try again</Text></Pressable></View> : p && <ScrollView contentContainerStyle={[styles.content, { paddingBottom: Math.max(24, insets.bottom) }]}>
-        <View style={styles.card}>
-          <View style={styles.identity}>
-            <View style={styles.avatar}><Text style={styles.initials}>{initials}</Text>{p.verified && <Image source={verifiedIcon} style={styles.verifiedIcon} contentFit="contain" />}</View>
-            <View style={styles.flex}>
-              <Text style={styles.name}>{p.name}</Text>
-              <Text style={styles.category}>{p.category}{p.experience ? ` · ${p.experience}` : ''}</Text>
-              <View style={styles.ratingRow}><Image source={starIcon} style={styles.star} /><Text style={styles.rating}>{p.rating == null ? 'New professional' : `${p.rating.toFixed(1)} (${p.reviewCount})`}</Text></View>
-              {p.verified && <View style={styles.badge}><Text style={styles.badgeText}>●  Verified provider</Text></View>}
-            </View>
-          </View>
+      <View style={styles.header}><Pressable onPress={close} accessibilityRole="button" accessibilityLabel="Back to Explore" style={styles.roundButton}><Icon name="arrow-left" color="#252525" /></Pressable><Text accessibilityRole="header" style={styles.title}>Provider Profile</Text><Pressable disabled={!p || loading || !!error} onPress={share} accessibilityRole="button" accessibilityLabel="Share provider profile" style={styles.roundButton}><Icon name="share-variant-outline" color="#252525" /></Pressable></View>
+      {!!shareError && <Text accessibilityRole="alert" style={styles.feedback}>{shareError}</Text>}
+      {loading ? <View style={styles.state}><ActivityIndicator size="large" color={purple} /><Text style={styles.body}>Loading profile…</Text></View> : error ? <View style={styles.state}><Text accessibilityRole="alert" style={styles.body}>{error}</Text><Pressable onPress={onRetry} accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Try again</Text></Pressable></View> : p && <ScrollView contentContainerStyle={[styles.content, { paddingBottom: Math.max(24, insets.bottom) }]}>
+        <View style={[styles.card, styles.hero]}>
+          <View style={styles.avatar}><Text style={styles.initials}>{initials}</Text>{p.verified && <View style={styles.avatarBadge}><Icon name="check-decagram-outline" color="#FFF" size={18} /></View>}</View>
+          <Text style={styles.name}>{p.name}</Text><Text style={styles.subtitle}>{p.category}</Text>
+          {p.verified && <View style={styles.badge}><Icon name="shield-check" size={14} /><Text style={styles.badgeText}>Verified Provider</Text></View>}
           <View style={styles.stats}>
-            <View style={styles.stat}><Text style={styles.statValue}>{p.rating == null ? '—' : p.rating.toFixed(1)}</Text><Text style={styles.statLabel}>Rating</Text></View>
-            <View style={[styles.stat, styles.statBorder]}><Text style={styles.statValue}>{p.reviewCount || 0}</Text><Text style={styles.statLabel}>Reviews</Text></View>
+            <View style={styles.stat}><View style={styles.statTop}><Icon name="star" color="#8D5B09" size={18} /><Text style={styles.statValue}>{p.rating == null ? 'New' : p.rating.toFixed(1)}</Text></View><Text style={styles.caption}>{p.reviewCount || 0} Reviews</Text></View>
+            <View style={styles.stat}><View style={styles.statTop}><Icon name="medal-outline" size={18} /><Text style={styles.statValue}>{p.experience || 'Not listed'}</Text></View><Text style={styles.caption}>Experience</Text></View>
+            <View style={styles.stat}><View style={styles.statTop}><Icon name="map-marker-outline" color="#007E5C" size={18} /><Text style={styles.statValue}>{p.serviceArea || 'Not listed'}</Text></View><Text style={styles.caption}>Service area</Text></View>
           </View>
         </View>
-        <Section title="About"><Text style={styles.body}>{p.bio || 'This provider hasn’t added an introduction yet.'}</Text>{!!p.experience && <View style={styles.detail}><Text style={styles.muted}>Experience</Text><Text style={styles.body}>{p.experience}</Text></View>}{!!p.qualifications && <View style={styles.detail}><Text style={styles.muted}>Qualifications</Text><Text style={styles.body}>{p.qualifications}</Text></View>}</Section>
-        <Section title="Services & pricing"><View style={styles.service}><View style={styles.flex}><Text style={styles.serviceName}>{p.category}</Text><Text style={styles.muted}>{p.price == null ? 'Ask the provider for a quote' : `per ${p.priceUnit}`}</Text></View><Text style={styles.price}>{p.price == null ? 'On request' : `LKR ${p.price.toLocaleString('en-US')}`}</Text></View></Section>
-        <Section title="Service area & availability"><View style={styles.detail}><Text style={styles.muted}>Service area</Text><Text style={styles.body}>{p.serviceArea || 'Service area not listed'}</Text></View><View style={styles.detail}><Text style={styles.muted}>Next availability</Text><Text style={styles.body}>{availabilityLabel(p.nextAvailableAt)}</Text></View></Section>
-        <Section title="Customer reviews"><View style={styles.reviewSummary}><Image source={starIcon} style={styles.largeStar} /><Text style={styles.reviewScore}>{p.rating == null ? '—' : p.rating.toFixed(1)}</Text><Text style={styles.muted}>{p.reviewCount || 0} {(p.reviewCount || 0) === 1 ? 'review' : 'reviews'}</Text></View><Text style={styles.body}>{p.reviewCount > 0 ? 'Written reviews are not available yet.' : 'No customer reviews yet.'}</Text></Section>
+        <Section title="About"><View style={styles.card}><Text style={styles.body}>{p.bio || 'This provider hasn’t added an introduction yet.'}</Text></View></Section>
+        <Section title="Services Offered" detail="1 service category"><View style={styles.grid}><View style={[styles.card, styles.serviceCard]}><View style={[styles.iconBox, styles.serviceIcon]}><Icon name="tools" /></View><Text style={styles.serviceTitle}>{p.category}</Text><Text style={styles.caption}>{p.price == null ? 'Price on request' : 'LKR ' + p.price.toLocaleString('en-US') + ' per ' + p.priceUnit}</Text></View></View></Section>
+        <Section title="Qualifications"><View style={styles.card}><InfoRow icon="check-decagram-outline" title={p.qualifications || 'Qualifications not listed'} description={p.qualifications ? 'Provided by the professional' : 'No public qualification details added yet.'} /></View>{!!p.experience && <View style={[styles.card, styles.spaced]}><InfoRow icon="school-outline" title={p.experience + ' experience'} description="Professional experience" /></View>}</Section>
+        <Section title="Verification"><View style={styles.card}><InfoRow icon={p.verified ? 'check' : 'shield-outline'} verified={p.verified} title={p.verified ? 'Provider Verified' : 'Verification not available'} description={p.verified ? 'Reviewed and approved by FixMate' : 'Verification details have not been provided.'} /></View></Section>
+        <Section title="Ratings & Reviews" detail={p.rating == null ? 'No ratings yet' : '★ ' + p.rating.toFixed(1) + ' (' + p.reviewCount + ')'}><View style={styles.card}><Text style={styles.body}>{p.reviewCount > 0 ? 'Written reviews are not available yet.' : 'No customer reviews yet. Reviews will appear here when available.'}</Text></View></Section>
+        <View style={styles.actionArea}><Pressable onPress={() => setShowAvailability(value => !value)} accessibilityRole="button" accessibilityState={{ expanded: showAvailability }} style={styles.button}><Text style={styles.buttonText}>Continue with Provider</Text><Icon name="arrow-right" color="#FFF" size={20} /></Pressable><Text style={styles.actionCaption}>No immediate charge</Text></View>
       </ScrollView>}
     </View>
   </Modal>;
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#F6F6F9' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#ECECF1' },
-  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { fontSize: 34, lineHeight: 38, color: '#7047FF' },
-  title: { fontSize: 19, fontWeight: '700', color: '#2A2A2A' },
-  content: { padding: 20, gap: 16, width: '100%', maxWidth: 600, alignSelf: 'center' },
-  card: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, boxShadow: '0px 4px 14px rgba(0, 0, 0, 0.04)' },
-  identity: { flexDirection: 'row', gap: 14, alignItems: 'center' },
-  avatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: '#F0EBFF', alignItems: 'center', justifyContent: 'center' },
-  initials: { color: '#7047FF', fontWeight: '700', fontSize: 22 },
-  verifiedIcon: { position: 'absolute', right: -2, bottom: -2, width: 24, height: 24, backgroundColor: '#FFF', borderRadius: 12 },
-  flex: { flex: 1, minWidth: 0 },
-  name: { fontSize: 17, fontWeight: '700', color: '#2A2A2A' },
-  category: { fontSize: 12.5, lineHeight: 19, color: '#7047FF', marginTop: 3 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 7 },
-  star: { width: 14, height: 14 },
-  rating: { fontSize: 12, color: '#2A2A2A' },
-  badge: { alignSelf: 'flex-start', backgroundColor: '#E5F5EF', borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3, marginTop: 7 },
-  badgeText: { fontSize: 11, color: '#079C73', fontWeight: '600' },
-  stats: { flexDirection: 'row', marginTop: 18, backgroundColor: '#F6F6F9', borderRadius: 16, paddingVertical: 12 },
+  screen: { flex: 1, backgroundColor: '#F9F8FE' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12 },
+  roundButton: { width: 44, height: 44, borderRadius: 24, backgroundColor: '#F0EEEE', alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 19, fontWeight: '600', color: '#202020' },
+  content: { paddingHorizontal: 20, paddingTop: 8, width: '100%', maxWidth: 600, alignSelf: 'center' },
+  card: { backgroundColor: '#FFF', borderRadius: 14, padding: 16, boxShadow: '0px 2px 3px rgba(24, 16, 48, 0.035)' },
+  hero: { alignItems: 'center', paddingTop: 16, paddingBottom: 16 },
+  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#E7DEFF', borderWidth: 1, borderColor: '#CEBDFF', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  initials: { color: '#5B2CE6', fontWeight: '700', fontSize: 26 },
+  avatarBadge: { position: 'absolute', right: -5, bottom: -5, backgroundColor: purple, borderRadius: 18, borderWidth: 3, borderColor: '#FFF', width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  name: { fontSize: 21, fontWeight: '600', color: '#202020', textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#555167', marginTop: 5, textAlign: 'center' },
+  badge: { flexDirection: 'row', gap: 4, alignItems: 'center', backgroundColor: '#E8DFFF', borderRadius: 20, paddingHorizontal: 11, paddingVertical: 4, marginTop: 12 },
+  badgeText: { fontSize: 12, color: '#5B2CE6', fontWeight: '500' },
+  stats: { flexDirection: 'row', alignSelf: 'stretch', marginTop: 16, backgroundColor: '#F6F3F3', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 17, gap: 4 },
   stat: { flex: 1, alignItems: 'center', gap: 4 },
-  statBorder: { borderLeftWidth: 1, borderLeftColor: '#ECECF1' },
-  statValue: { fontSize: 16, fontWeight: '700', color: '#2A2A2A' },
-  statLabel: { fontSize: 11, color: '#6E6E76' },
-  sectionTitle: { fontSize: 14.5, fontWeight: '700', color: '#2A2A2A', marginBottom: 12 },
-  body: { fontSize: 13, lineHeight: 21, color: '#45454D' },
-  muted: { fontSize: 11.5, lineHeight: 18, color: '#6E6E76' },
-  detail: { gap: 3, marginTop: 8 },
-  service: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
-  serviceName: { fontSize: 13, lineHeight: 20, fontWeight: '500', color: '#2A2A2A' },
-  price: { fontSize: 13, fontWeight: '700', color: '#2A2A2A', maxWidth: '48%' },
-  reviewSummary: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  largeStar: { width: 20, height: 20 },
-  reviewScore: { fontSize: 24, fontWeight: '700', color: '#2A2A2A' },
-  state: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 30, gap: 16 },
-  button: { backgroundColor: '#7047FF', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 14 },
+  statTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3 },
+  statValue: { fontSize: 15, fontWeight: '500', color: '#222', textAlign: 'center', flexShrink: 1 },
+  caption: { fontSize: 11.5, lineHeight: 17, color: '#514C61' },
+  section: { marginTop: 28 },
+  sectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#222' },
+  body: { fontSize: 13.5, lineHeight: 22, color: '#555167' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  serviceCard: { width: '49%', minHeight: 122 },
+  iconBox: { width: 44, height: 44, borderRadius: 9, backgroundColor: '#F7F4F4', alignItems: 'center', justifyContent: 'center' },
+  serviceIcon: { backgroundColor: '#E7DDFF', width: 40, height: 40, marginBottom: 10 },
+  serviceTitle: { fontSize: 16, fontWeight: '600', color: '#222', marginBottom: 2 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 15 },
+  flex: { flex: 1 },
+  rowTitle: { fontSize: 14, lineHeight: 21, fontWeight: '500', color: '#222' },
+  check: { width: 29, height: 29, borderRadius: 15, backgroundColor: '#69F0C0' },
+  spaced: { marginTop: 8 },
+  actionArea: { marginTop: 34, gap: 8 },
+  button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: purple, borderRadius: 12, minHeight: 54, paddingHorizontal: 20, paddingVertical: 14 },
   buttonText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+  actionCaption: { fontSize: 11.5, textAlign: 'center', color: '#555167' },
+  state: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 30, gap: 16 },
+  feedback: { paddingHorizontal: 20, color: '#B42318', fontSize: 13 },
 });

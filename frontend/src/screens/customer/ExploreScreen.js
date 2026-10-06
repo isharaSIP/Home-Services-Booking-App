@@ -56,7 +56,7 @@ function Sheet({
       }]} accessibilityViewIsModal><View style={styles.sheetHeader}><Text accessibilityRole="header" style={styles.sheetTitle}>{title}</Text><Pressable accessibilityRole="button" accessibilityLabel="Close dialog" onPress={onClose} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View>{children}</View>
   </KeyboardAvoidingView></Modal>;
 }
-export default function ExploreScreen() {
+export default function ExploreScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const [providers, setProviders] = useState([]),
     [loading, setLoading] = useState(true),
@@ -246,7 +246,7 @@ export default function ExploreScreen() {
         checked: sort === value,
         disabled: locating
       }} disabled={locating} onPress={() => chooseSort(value)} style={styles.sortOption}><Text style={styles.optionText}>{label}</Text><Text style={styles.link}>{sort === value ? "●" : "○"}</Text></Pressable>)}{locating && <ActivityIndicator color={COLORS.primary} />}{locationError !== "" && <Text accessibilityRole="alert" style={styles.errorText}>{locationError}</Text>}</Sheet>
-    <ProviderProfileModal visible={sheet === "profile"} provider={profile} loading={profileLoading} error={profileError} onClose={close} onRetry={() => openProfile(profileId)} />
+    <ProviderProfileModal visible={sheet === "profile"} provider={profile} loading={profileLoading} error={profileError} onClose={close} onRetry={() => openProfile(profileId)} onTrackBookings={() => navigation.navigate("Bookings")} />
   </View>;
 }
 const styles = StyleSheet.create({
