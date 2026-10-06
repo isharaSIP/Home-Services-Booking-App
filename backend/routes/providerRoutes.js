@@ -1,0 +1,10 @@
+const express = require("express");
+const User = require("../models/User");
+const { protect } = require("../middleware/authMiddleware");
+const { createProviderController } = require("../controllers/providerController");
+const controller = createProviderController(User);
+const router = express.Router();
+router.use(protect);
+router.get("/", controller.list);
+router.get("/:id", controller.detail);
+module.exports = router;
