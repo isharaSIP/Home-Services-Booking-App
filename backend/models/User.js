@@ -69,6 +69,8 @@ const userSchema = new mongoose.Schema(
       rating: { type: Number, min: 0, max: 5, default: null },
       reviewCount: { type: Number, min: 0, default: 0 },
       nextAvailableAt: { type: Date, default: null },
+      // Explicitly published appointment starts; never inferred from working days.
+      bookingSlots: [{ type: Date }],
       nicFront: { type: String, default: "" }, // Base64 or Image URI (Required for Provider)
       nicBack: { type: String, default: "" },  // Base64 or Image URI (Required for Provider)
       certificates: [{ type: String }],         // Array of Base64 or Image URIs (Optional)

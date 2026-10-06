@@ -1,0 +1,12 @@
+const router = require('express').Router();
+const { protect } = require('../middleware/authMiddleware');
+const { authorizeRoles } = require('../middleware/roleMiddleware');
+const { createBookingController } = require('../controllers/bookingController');
+const controller = createBookingController(require('../models/Booking'), require('../models/User'));
+router.use(protect);
+router.get('/availability/:providerId', authorizeRoles('customer', 'provider'), controller.availability);
+router.post('/slots', authorizeRoles('provider'), controller.publishSlot);
+router.get('/', authorizeRoles('customer', 'provider'), controller.list);
+router.post('/', authorizeRoles('customer'), controller.create);
+router.patch('/:id', authorizeRoles('customer', 'provider'), controller.update);
+module.exports = router;

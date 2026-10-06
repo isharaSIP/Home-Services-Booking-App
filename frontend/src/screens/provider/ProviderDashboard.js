@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useCallback, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { bookingService, BOOKING_TIMES, bookingWhen } from "../../services/bookingService";
 import {
   View,
   Text,
@@ -7,6 +9,8 @@ import {
   TouchableOpacity,
   ScrollView,
   StatusBar,
+  TextInput,
+  ActivityIndicator,
 } from "react-native";
 import { COLORS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
@@ -39,6 +43,8 @@ const ProviderDashboard = () => {
             Accept new service bookings and manage your earnings seamlessly.
           </Text>
         </View>
+
+        <ProviderBookings />
 
         {/* Stats Row */}
         <View style={styles.statsContainer}>
@@ -82,6 +88,32 @@ const ProviderDashboard = () => {
     </SafeAreaView>
   );
 };
+
+function ProviderBookings() {
+  const [rows, setRows] = useState([]), [date, setDate] = useState(''), [time, setTime] = useState('08:00');
+  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [message, setMessage] = useState('');
+  const request = useRef(null), lock = useRef(false);
+  const load = useCallback(async () => { request.current?.abort(); const controller = new AbortController(); request.current = controller; try { const result = await bookingService.list(controller.signal); if (!controller.signal.aborted) setRows(result); } catch (e) { if (!controller.signal.aborted) setMessage(e.response?.data?.message || 'Unable to load requests.'); } finally { if (!controller.signal.aborted) setLoading(false); } }, []);
+  useFocusEffect(useCallback(() => { void load(); const timer = setInterval(load, 30000); return () => { clearInterval(timer); request.current?.abort(); }; }, [load]));
+  async function publish() {
+    if (lock.current) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { setMessage('Enter a date as YYYY-MM-DD.'); return; }
+    const start = new Date(date + 'T' + time + ':00+05:30');
+    if (!Number.isFinite(start.getTime()) || new Date(start.getTime() + 19800000).toISOString().slice(0, 10) !== date || start <= new Date()) { setMessage('Choose a valid future date and time.'); return; }
+    lock.current = true; setBusy(true);
+    try { await bookingService.publishSlot(start.toISOString()); setMessage('Published: ' + bookingWhen(start) + '. Customers can now request this appointment.'); }
+    catch (e) { setMessage(e.response?.data?.message || 'Could not publish this appointment.'); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  async function update(id, action) {
+    if (lock.current) return; lock.current = true; setBusy(true);
+    try { const result = await bookingService.update(id, { action }); setRows(items => items.map(b => b.id === id ? result : b)); setMessage('Booking updated to ' + result.status + '.'); }
+    catch (e) { setMessage(e.response?.data?.message || 'Could not update booking.'); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  const actions = { pending: [['confirm', 'Accept request'], ['reject', 'Decline']], confirmed: [['start', 'Start job']], ongoing: [['complete', 'Mark completed']] };
+  return <View style={styles.infoCard}><Text style={styles.infoCardTitle}>Appointment availability</Text><Text style={{ color: COLORS.textMuted, marginBottom: 10 }}>Publish individual appointments in Sri Lanka time (up to 90 days ahead). Only published times appear to customers.</Text><TextInput accessibilityLabel="Appointment date YYYY-MM-DD" placeholder="YYYY-MM-DD" value={date} onChangeText={setDate} maxLength={10} style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, padding: 12, marginBottom: 10 }} /><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{BOOKING_TIMES.map(t => <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: time === t }} key={t} onPress={() => setTime(t)} style={{ padding: 12, borderRadius: 8, backgroundColor: time === t ? COLORS.primary : COLORS.inputBg }}><Text style={{ color: time === t ? '#FFF' : COLORS.textPrimary }}>{t}</Text></TouchableOpacity>)}</View><TouchableOpacity accessibilityRole="button" disabled={busy} onPress={publish} style={{ backgroundColor: COLORS.primary, padding: 14, borderRadius: 10, marginVertical: 12 }}><Text style={{ color: '#FFF', textAlign: 'center', fontWeight: '600' }}>{busy ? 'Saving…' : 'Publish appointment'}</Text></TouchableOpacity>{!!message && <Text accessibilityRole="alert" style={{ color: COLORS.textPrimary, marginBottom: 12 }}>{message}</Text>}<Text style={styles.infoCardTitle}>Booking requests</Text>{loading && <ActivityIndicator color={COLORS.primary} />}<TouchableOpacity accessibilityRole="button" onPress={load}><Text style={{ color: COLORS.primary, marginBottom: 12 }}>Refresh requests</Text></TouchableOpacity>{!loading && rows.length === 0 && <Text>No requests yet.</Text>}{rows.map(b => <View key={b.id} style={{ borderTopWidth: 1, borderTopColor: COLORS.inputBorder, paddingVertical: 14, gap: 6 }}><Text style={{ fontWeight: '700' }}>{b.customerName} · {b.status.toUpperCase()}</Text><Text>{bookingWhen(b.startsAt)}</Text><Text>{b.service}</Text><Text>{b.problem}</Text><Text>{b.location}</Text>{!!b.notes && <Text>{b.notes}</Text>}<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>{(actions[b.status] || []).map(([action, label]) => <TouchableOpacity key={action} accessibilityRole="button" disabled={busy} onPress={() => update(b.id, action)} style={{ padding: 12, backgroundColor: COLORS.inputBg, borderRadius: 8 }}><Text style={{ color: COLORS.primary }}>{label}</Text></TouchableOpacity>)}</View></View>)}</View>;
+}
 
 const styles = StyleSheet.create({
   safeArea: {
