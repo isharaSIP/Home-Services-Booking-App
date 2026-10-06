@@ -34,6 +34,7 @@ export function filterProviders(providers, {
   const area = filters.area.trim().toLowerCase();
   return providers.map(p => ({
     ...p,
+    price: p.pricing ? (p.pricing.type === 'fixed' ? p.pricing.amountMinor / 100 : p.pricing.type === 'estimate' ? p.pricing.maxMinor / 100 : null) : p.price,
     distance: distanceKm(p, location)
   })).filter(p => (category === "All" || p.category.toLowerCase() === category.toLowerCase()) && (!needle || `${p.name} ${p.category} ${p.serviceArea}`.toLowerCase().includes(needle)) && (!area || p.serviceArea.toLowerCase().includes(area)) && (filters.maxPrice === "" || Number.isFinite(p.price) && p.price <= Number(filters.maxPrice)) && (!filters.minRating || Number.isFinite(p.rating) && p.rating >= filters.minRating) && (!filters.availableToday || availableToday(p.nextAvailableAt, now))).sort((a, b) => {
     const fallback = a.name.localeCompare(b.name) || a.id.localeCompare(b.id);

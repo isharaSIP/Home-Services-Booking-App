@@ -1,5 +1,5 @@
 // Only these public profile fields may leave the customer directory endpoint.
-const PUBLIC_FIELDS = "name providerDetails.category providerDetails.experience providerDetails.qualifications providerDetails.bio providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.price providerDetails.priceUnit providerDetails.rating providerDetails.reviewCount providerDetails.nextAvailableAt";
+const PUBLIC_FIELDS = "name providerDetails.category providerDetails.experience providerDetails.qualifications providerDetails.bio providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.price providerDetails.priceUnit providerDetails.rating providerDetails.reviewCount providerDetails.nextAvailableAt providerDetails.pricing";
 const APPROVED = {
   role: "provider",
   isVerified: true,
@@ -19,7 +19,8 @@ function publicProvider(user) {
     serviceArea: d.serviceArea || "",
     latitude: d.latitude ?? null,
     longitude: d.longitude ?? null,
-    price: d.price ?? null,
+    pricing: require('./paymentController').publicPricing(d.pricing),
+    price: d.pricing?.type === 'fixed' ? d.pricing.amountMinor / 100 : d.pricing?.type === 'estimate' ? d.pricing.maxMinor / 100 : null,
     priceUnit: d.priceUnit || "visit",
     rating: d.rating ?? null,
     reviewCount: d.reviewCount || 0,

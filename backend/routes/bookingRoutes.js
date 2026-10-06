@@ -4,6 +4,8 @@ const { authorizeRoles } = require('../middleware/roleMiddleware');
 const { createBookingController } = require('../controllers/bookingController');
 const controller = createBookingController(require('../models/Booking'), require('../models/User'));
 router.use(protect);
+router.get('/pricing', authorizeRoles('provider'), controller.getPricing);
+router.patch('/pricing', authorizeRoles('provider'), controller.savePricing);
 router.get('/availability/:providerId', authorizeRoles('customer', 'provider'), controller.availability);
 router.post('/slots', authorizeRoles('provider'), controller.publishSlot);
 router.get('/', authorizeRoles('customer', 'provider'), controller.list);

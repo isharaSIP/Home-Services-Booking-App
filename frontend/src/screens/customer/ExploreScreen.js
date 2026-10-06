@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { Image } from "expo-image";
+import { bookingPrice } from '../../services/bookingService';
 import ProviderProfileModal from "./ProviderProfileModal";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,7 +25,7 @@ const Icon = ({
   height: size
 }} contentFit="contain" accessible={false} />;
 const initials = name => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
-const priceText = p => p.price == null ? "Price on request" : `LKR ${p.price.toLocaleString("en-US")}`;
+const priceText = bookingPrice;
 function ProviderCard({
   provider: p,
   onPress
@@ -37,7 +38,7 @@ function ProviderCard({
       <View style={styles.rowBetween}><Text style={styles.providerName} numberOfLines={2}>{p.name}</Text><View style={styles.rating}><Icon name="star" /><Text style={styles.ratingText}>{p.rating == null ? "New" : p.rating.toFixed(1)}</Text>{p.reviewCount > 0 && <Text style={styles.smallMuted}>({p.reviewCount})</Text>}</View></View>
       <Text style={styles.categoryText}>{p.category}</Text>
       <View style={styles.metadata}><View style={styles.metaItem}><Icon name="location" /><Text style={styles.smallMuted}>{p.distance != null ? `${p.distance.toFixed(1)} km away` : p.serviceArea || "Location not listed"}</Text></View><View style={styles.metaItem}><Icon name="clock" /><Text style={styles.smallMuted}>{availabilityLabel(p.nextAvailableAt)}</Text></View></View>
-      <View style={styles.cardFooter}><Text style={styles.price}>{priceText(p)}{p.price != null && <Text style={styles.unit}> per {p.priceUnit}</Text>}</Text><View style={styles.profileLink}><Text style={styles.link}>View profile</Text><Icon name="chevron" /></View></View>
+      <View style={styles.cardFooter}><Text style={styles.price}>{priceText(p)}</Text><View style={styles.profileLink}><Text style={styles.link}>View profile</Text><Icon name="chevron" /></View></View>
     </View>
   </Pressable>;
 }
@@ -219,7 +220,7 @@ export default function ExploreScreen({ navigation }) {
           ...d,
           area
         }))} placeholder="Town or city" accessibilityLabel="Service area" style={styles.input} />
-      <Text style={styles.label}>Maximum price (LKR)</Text><TextInput value={draft.maxPrice} onChangeText={maxPrice => setDraft(d => ({
+      <Text style={styles.label}>Maximum service price (LKR; estimates use upper limit)</Text><TextInput value={draft.maxPrice} onChangeText={maxPrice => setDraft(d => ({
           ...d,
           maxPrice
         }))} placeholder="No maximum" accessibilityLabel="Maximum price in LKR" keyboardType="decimal-pad" style={styles.input} />
