@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { bookingPrice } from '../../services/bookingService';
 import { BookingFlowModal } from './BookingsScreen';
 
 const purple = '#7047FA';
@@ -41,7 +42,7 @@ export default function ProviderProfileModal({ visible, provider: p, loading, er
           </View>
         </View>
         <Section title="About"><View style={styles.card}><Text style={styles.body}>{p.bio || 'This provider hasn’t added an introduction yet.'}</Text></View></Section>
-        <Section title="Services Offered" detail="1 service category"><View style={styles.grid}><View style={[styles.card, styles.serviceCard]}><View style={[styles.iconBox, styles.serviceIcon]}><Icon name="tools" /></View><Text style={styles.serviceTitle}>{p.category}</Text><Text style={styles.caption}>{p.price == null ? 'Price on request' : 'LKR ' + p.price.toLocaleString('en-US') + ' per ' + p.priceUnit}</Text></View></View></Section>
+        <Section title="Services Offered" detail="1 service category"><View style={styles.grid}><View style={[styles.card, styles.serviceCard]}><View style={[styles.iconBox, styles.serviceIcon]}><Icon name="tools" /></View><Text style={styles.serviceTitle}>{p.category}</Text><Text style={styles.caption}>{bookingPrice(p)}</Text>{!!p.pricing?.inclusions && <Text style={styles.body}>Included: {p.pricing.inclusions}</Text>}{!!p.pricing?.exclusions && <Text style={styles.caption}>Excluded: {p.pricing.exclusions}</Text>}</View></View></Section>
         <Section title="Qualifications"><View style={styles.card}><InfoRow icon="check-decagram-outline" title={p.qualifications || 'Qualifications not listed'} description={p.qualifications ? 'Provided by the professional' : 'No public qualification details added yet.'} /></View>{!!p.experience && <View style={[styles.card, styles.spaced]}><InfoRow icon="school-outline" title={p.experience + ' experience'} description="Professional experience" /></View>}</Section>
         <Section title="Verification"><View style={styles.card}><InfoRow icon={p.verified ? 'check' : 'shield-outline'} verified={p.verified} title={p.verified ? 'Provider Verified' : 'Verification not available'} description={p.verified ? 'Reviewed and approved by FixMate' : 'Verification details have not been provided.'} /></View></Section>
         <Section title="Ratings & Reviews" detail={p.rating == null ? 'No ratings yet' : '★ ' + p.rating.toFixed(1) + ' (' + p.reviewCount + ')'}><View style={styles.card}><Text style={styles.body}>{p.reviewCount > 0 ? 'Written reviews are not available yet.' : 'No customer reviews yet. Reviews will appear here when available.'}</Text></View></Section>

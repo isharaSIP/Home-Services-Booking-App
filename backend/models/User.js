@@ -66,6 +66,7 @@ const userSchema = new mongoose.Schema(
       longitude: { type: Number, min: -180, max: 180, default: null },
       price: { type: Number, min: 0, default: null },
       priceUnit: { type: String, enum: ["visit", "hour", "session", "appliance"], default: "visit" },
+      pricing: { type: mongoose.Schema.Types.Mixed, default: null },
       rating: { type: Number, min: 0, max: 5, default: null },
       reviewCount: { type: Number, min: 0, default: 0 },
       nextAvailableAt: { type: Date, default: null },

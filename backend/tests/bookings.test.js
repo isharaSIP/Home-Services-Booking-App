@@ -29,7 +29,7 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const [provider, a, b] = await Promise.all([make('Provider', 'provider', '0700000001'), make('Alice', 'customer', '0700000002'), make('Bob', 'customer', '0700000003')]);
     const jwt = require('jsonwebtoken');
     const tokens = new Map([provider, a, b].map(u => [String(u._id), jwt.sign({ id: u._id, role: u.role }, process.env.JWT_SECRET, { expiresIn: '5m' })]));
-    const express = require('express'), app = express(); app.use(express.json()); app.use('/api/bookings', require('../routes/bookingRoutes'));
+    const express = require('express'), app = express(); app.use(express.json()); app.use('/api/bookings', require('../routes/bookingRoutes')); app.use('/api/payments', require('../routes/paymentRoutes'));
     server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${server.address().port}/api/bookings`;
     const call = async (user, path = '', method = 'GET', data) => { const res = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(user ? { Authorization: 'Bearer ' + tokens.get(String(user._id)) } : {}) }, body: data ? JSON.stringify(data) : undefined }); return { status: res.status, body: await res.json() }; };
@@ -39,7 +39,10 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const availability = await call(a, '/availability/' + provider._id);
     assert.equal(availability.body.slots.length, 3);
     assert.ok(availability.body.slots.every(s => s.available));
-    const payload = { providerId: String(provider._id), startsAt: first, problem: 'Repair outlet', location: 'Test Street', notes: 'Test notes', requestId: 'first' };
+    assert.equal((await call(a, '/pricing', 'PATCH', { type: 'fixed', amount: 1, inclusions: 'Bad' })).status, 403);
+    const settings = await call(provider, '/pricing', 'PATCH', { type: 'fixed', amount: 4500, inclusions: 'Outlet repair including labour', bankDetails: 'Test Bank / Test Account 123' });
+    assert.equal(settings.status, 200);
+    const payload = { acceptPricing: true, pricingVersion: settings.body.pricing.version, providerId: String(provider._id), startsAt: first, problem: 'Repair outlet', location: 'Test Street', notes: 'Test notes', requestId: 'first' };
     assert.equal((await call(a, '', 'POST', { ...payload, problem: ' ' })).status, 400);
     assert.equal((await call(provider, '', 'POST', payload)).status, 403);
     // ObjectId casing must not create two different reservation keys.
@@ -58,8 +61,9 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal(occupied.status, 201);
     assert.equal((await call(owner, '/' + created.id, 'PATCH', { action: 'reschedule', startsAt: second })).status, 409);
     assert.equal((await Booking.findById(created.id)).startsAt.toISOString(), first);
-    const moved = await call(owner, '/' + created.id, 'PATCH', { action: 'reschedule', startsAt: third, problem: 'Updated description', location: 'New address', notes: 'New notes' });
-    assert.equal(moved.body.booking.status, 'pending'); assert.equal(moved.body.booking.location, 'New address');
+    assert.equal((await call(owner, '/' + created.id, 'PATCH', { action: 'reschedule', startsAt: third, problem: 'Different scope' })).status, 409);
+    const moved = await call(owner, '/' + created.id, 'PATCH', { action: 'reschedule', startsAt: third, notes: 'New notes' });
+    assert.equal(moved.body.booking.status, 'pending'); assert.equal(moved.body.booking.location, 'Test Street');
     assert.equal((await call(owner)).body.bookings.length, 1);
     assert.equal((await call(provider)).body.bookings.length, 2);
     assert.equal((await call(other, '/' + occupied.body.booking.id, 'PATCH', { action: 'cancel' })).body.booking.status, 'cancelled');
@@ -69,6 +73,70 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal((await call(provider, '/' + created.id, 'PATCH', { action: 'start' })).body.booking.status, 'ongoing');
     assert.equal((await call(provider, '/' + created.id, 'PATCH', { action: 'complete' })).body.booking.status, 'completed');
     assert.equal((await call(owner, '/' + created.id, 'PATCH', { action: 'cancel' })).status, 409);
+
+    const pay = async (user, id, data) => {
+      const response = await fetch(base.replace('/bookings', '/payments/') + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tokens.get(String(user._id)) }, body: JSON.stringify(data) });
+      return { status: response.status, body: await response.json() };
+    };
+    assert.equal((await pay(other, created.id, { action: 'report', method: 'cash' })).status, 404);
+    assert.equal((await pay(owner, created.id, { action: 'confirm' })).status, 409);
+    assert.equal((await pay(provider, created.id, { action: 'confirm' })).status, 409);
+    assert.equal((await pay(owner, created.id, { action: 'report', method: 'bank_transfer' })).status, 400);
+    const reported = await pay(owner, created.id, { action: 'report', method: 'bank_transfer', reference: 'TEST-001', totalMinor: 1 });
+    assert.equal(reported.status, 200); assert.equal(reported.body.booking.invoice.totalMinor, 450000);
+    assert.equal((await pay(provider, created.id, { action: 'confirm', reportedAt: 'old' })).status, 409);
+    const paid = await pay(provider, created.id, { action: 'confirm', reportedAt: reported.body.booking.payment.reportedAt });
+    assert.equal(paid.body.booking.payment.status, 'paid'); assert.ok(paid.body.booking.payment.receipt);
+    assert.equal((await pay(owner, created.id, { action: 'report', method: 'cash' })).body.booking.payment.method, 'bank_transfer');
+
+    // Estimates cannot bypass quote acceptance, and client totals never set an invoice.
+    const estimate = await call(provider, '/pricing', 'PATCH', { type: 'estimate', min: 1000, max: 5000, inclusions: 'Labour estimate; quote required' });
+    assert.equal((await call(a, '', 'POST', { ...payload, requestId: 'stale' })).status, 409);
+    const est = await call(a, '', 'POST', { ...payload, requestId: 'estimate', pricingVersion: estimate.body.pricing.version });
+    assert.equal(est.status, 201); const eid = est.body.booking.id;
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'confirm' })).status, 409);
+    assert.equal((await pay(a, eid, { action: 'report', method: 'cash' })).status, 409);
+    const quoteInput = { action: 'quote', scope: 'Replace outlet, labour and materials', items: [{ description: 'Labour', amount: 2000.25 }, { description: 'Parts', amount: 500.10 }], totalMinor: 1 };
+    assert.equal((await call(a, '/' + eid, 'PATCH', quoteInput)).status, 409);
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { ...quoteInput, items: [{ description: 'Invalid', amount: -1 }] })).status, 400);
+    const quoted = await call(provider, '/' + eid, 'PATCH', quoteInput);
+    assert.equal(quoted.body.booking.quote.totalMinor, 250035);
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'start' })).status, 409);
+    assert.equal((await call(a, '/' + eid, 'PATCH', { action: 'approve_quote', quoteVersion: 999 })).status, 409);
+    assert.equal((await call(b, '/' + eid, 'PATCH', { action: 'approve_quote', quoteVersion: 1 })).status, 404);
+    const decision = await Promise.all(['approve_quote', 'decline_quote'].map(action => call(a, '/' + eid, 'PATCH', { action, quoteVersion: 1 })));
+    assert.deepEqual(decision.map(r => r.status).sort(), [200, 409]);
+    // Start a deterministic second estimate after exercising the decision race.
+    if (decision.find(r => r.status === 200).body.booking.status !== 'cancelled') await call(a, '/' + eid, 'PATCH', { action: 'cancel' });
+    const finalEst = await call(a, '', 'POST', { ...payload, requestId: 'estimate-final', pricingVersion: estimate.body.pricing.version });
+    const fid = finalEst.body.booking.id;
+    await call(provider, '/' + fid, 'PATCH', quoteInput);
+    await call(a, '/' + fid, 'PATCH', { action: 'approve_quote', quoteVersion: 1 });
+    await call(provider, '/' + fid, 'PATCH', { action: 'start' });
+    await call(provider, '/' + fid, 'PATCH', { ...quoteInput, items: [{ description: 'Replacement total', amount: 4000 }] });
+    assert.equal((await call(provider, '/' + fid, 'PATCH', { action: 'complete' })).status, 409);
+    const declined = await call(a, '/' + fid, 'PATCH', { action: 'decline_quote', quoteVersion: 2 });
+    assert.equal(declined.body.booking.status, 'ongoing'); assert.equal(declined.body.booking.quote.totalMinor, 250035);
+    const done = await call(provider, '/' + fid, 'PATCH', { action: 'complete', totalMinor: 1 });
+    assert.equal(done.body.booking.invoice.totalMinor, 250035);
+    const cash = await pay(a, fid, { action: 'report', method: 'cash' });
+    assert.equal(cash.body.booking.payment.status, 'awaiting_confirmation');
+    assert.equal((await pay(provider, fid, { action: 'reject', reportedAt: cash.body.booking.payment.reportedAt })).body.booking.payment.status, 'unpaid');
+
+    // The inspection is separate from repair consent; declining repairs bills only its disclosed fee.
+    const inspection = await call(provider, '/pricing', 'PATCH', { type: 'inspection', inspectionFee: 750, inclusions: 'Diagnosis only, not repairs' });
+    const inspected = await call(b, '', 'POST', { ...payload, startsAt: second, requestId: 'inspection', pricingVersion: inspection.body.pricing.version });
+    assert.equal(inspected.status, 201); const iid = inspected.body.booking.id;
+    assert.equal((await call(provider, '/' + iid, 'PATCH', { action: 'confirm' })).body.booking.status, 'inspection_confirmed');
+    assert.equal((await call(provider, '/' + iid, 'PATCH', quoteInput)).status, 409);
+    assert.equal((await call(provider, '/' + iid, 'PATCH', { action: 'inspect' })).body.booking.status, 'inspecting');
+    assert.equal((await call(b, '/' + iid, 'PATCH', { action: 'cancel' })).status, 409);
+    const repairQuote = await call(provider, '/' + iid, 'PATCH', quoteInput);
+    assert.equal(repairQuote.body.booking.quote.totalMinor, 325035);
+    const repairDeclined = await call(b, '/' + iid, 'PATCH', { action: 'decline_quote', quoteVersion: 1 });
+    assert.equal(repairDeclined.body.booking.status, 'completed'); assert.equal(repairDeclined.body.booking.invoice.totalMinor, 75000);
+    assert.equal(repairDeclined.body.booking.invoice.inspectionOnly, true);
+    assert.equal((await call(provider, '/' + iid, 'PATCH', quoteInput)).status, 409);
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (mongoose.connection.readyState === 1 && mongoose.connection.name === dbName && /^fixmate_booking_test_[a-f0-9]{16}$/.test(dbName)) await mongoose.connection.db.dropDatabase();

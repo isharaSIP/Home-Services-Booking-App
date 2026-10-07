@@ -6,11 +6,20 @@ const provider = { _id: "123456789012345678901234", name: "Test Provider", passw
 function response() { return { code: 200, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } }; }
 test("directory exposes public fields only, never credentials or verification documents", () => {
   const result = publicProvider(provider);
-  assert.equal(result.price, 2500);
+  assert.equal(result.price, null);
   assert.equal(result.rating, null);
   assert.equal(result.latitude, null);
   assert.equal(result.verified, true);
   for (const secret of ["password", "email", "otp", "nicFront", "nicBack", "certificates"]) assert.ok(!JSON.stringify(result).includes(secret));
+});
+
+test("public pricing never exposes bank account instructions or treats an inspection fee as the repair price", () => {
+  const fixture = { ...provider, providerDetails: { ...provider.providerDetails, pricing: { type: 'inspection', inspectionFeeMinor: 75000, inclusions: 'Diagnosis only', version: 'v1', bankDetails: 'PRIVATE BANK ACCOUNT' } } };
+  const result = publicProvider(fixture);
+  assert.equal(result.price, null);
+  assert.equal(result.pricing.inspectionFeeMinor, 75000);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE BANK ACCOUNT'));
+  assert.ok(!Object.hasOwn(result.pricing, 'bankDetails'));
 });
 test("list requires verified and approved providers and uses an inclusive projection", async () => {
   let query, projection;
