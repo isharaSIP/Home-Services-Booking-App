@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validSlot } = require('../controllers/bookingController');
+const { validSlot, validPreference, overlaps } = require('../controllers/bookingController');
 
 test('appointment validation uses published time choices, future dates and a 90-day horizon', () => {
   const now = Date.parse('2026-10-06T00:00:00Z');
@@ -10,6 +10,19 @@ test('appointment validation uses published time choices, future dates and a 90-
   assert.equal(validSlot('2027-10-07T02:30:00.000Z', now), false);
   assert.equal(validSlot('2026-02-30T02:30:00.000Z', now), false);
   assert.equal(validSlot(null, now), false);
+});
+
+test('preferred windows and service/travel intervals validate boundaries and gaps', () => {
+  const now = Date.parse('2026-10-06T00:00:00Z'), start = '2026-10-07T02:30:00.000Z';
+  assert.equal(validPreference(start, 'preferred', null, now), true);
+  assert.equal(validPreference(start, 'flexible', '2026-10-07T06:30:00.000Z', now), true);
+  for (const end of [start, 'invalid', '2026-10-08T06:30:00.000Z', '2026-10-07T22:30:00.000Z']) assert.equal(validPreference(start, 'flexible', end, now), false);
+  assert.equal(validPreference(start, 'fake', null, now), false);
+  const booking = { startsAt: start, durationMinutes: 120, bufferMinutes: 30 };
+  assert.equal(overlaps('2026-10-07T04:30:00.000Z', 60, 30, booking), true); // travel buffer
+  assert.equal(overlaps('2026-10-07T05:00:00.000Z', 60, 30, booking), false); // adjacent after buffer
+  assert.equal(overlaps('2026-10-07T01:30:00.000Z', 60, 30, booking), true); // earlier job's travel overlaps
+  assert.equal(overlaps('2026-10-07T00:30:00.000Z', 60, 30, booking), false); // actual gap
 });
 
 test('booking lifecycle, ownership, retries and concurrent slot reservations against isolated MongoDB', { skip: process.env.RUN_BOOKING_INTEGRATION !== '1', timeout: 90000 }, async () => {
@@ -26,9 +39,9 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const second = new Date(day + 'T10:30:00+05:30').toISOString();
     const third = new Date(day + 'T12:00:00+05:30').toISOString();
     const make = (name, role, phone) => User.create({ name, email: name.toLowerCase() + '@example.test', phone, password: 'Test-only-password', role, isVerified: true, isApprovedByAdmin: true, providerDetails: role === 'provider' ? { approvalStatus: 'approved', category: 'Electrical Repair', price: 4500 } : undefined });
-    const [provider, a, b] = await Promise.all([make('Provider', 'provider', '0700000001'), make('Alice', 'customer', '0700000002'), make('Bob', 'customer', '0700000003')]);
+    const [provider, a, b, otherProvider] = await Promise.all([make('Provider', 'provider', '0700000001'), make('Alice', 'customer', '0700000002'), make('Bob', 'customer', '0700000003'), make('OtherProvider', 'provider', '0700000004')]);
     const jwt = require('jsonwebtoken');
-    const tokens = new Map([provider, a, b].map(u => [String(u._id), jwt.sign({ id: u._id, role: u.role }, process.env.JWT_SECRET, { expiresIn: '5m' })]));
+    const tokens = new Map([provider, a, b, otherProvider].map(u => [String(u._id), jwt.sign({ id: u._id, role: u.role }, process.env.JWT_SECRET, { expiresIn: '5m' })]));
     const express = require('express'), app = express(); app.use(express.json()); app.use('/api/bookings', require('../routes/bookingRoutes')); app.use('/api/payments', require('../routes/paymentRoutes'));
     server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${server.address().port}/api/bookings`;
@@ -36,6 +49,9 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal((await call(null)).status, 401);
     assert.equal((await call(a, '/slots', 'POST', { startsAt: first })).status, 403);
     for (const startsAt of [first, second, third]) assert.equal((await call(provider, '/slots', 'POST', { startsAt })).status, 200);
+    assert.equal((await call(a, '/slots', 'DELETE', { startsAt: first })).status, 403);
+    assert.equal((await call(provider, '/slots', 'DELETE', { startsAt: first })).status, 200);
+    assert.equal((await call(provider, '/slots', 'POST', { startsAt: first })).status, 200);
     const availability = await call(a, '/availability/' + provider._id);
     assert.equal(availability.body.slots.length, 3);
     assert.ok(availability.body.slots.every(s => s.available));
@@ -53,6 +69,17 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const retry = await call(owner, '', 'POST', { ...payload, requestId: winnerIndex === 0 ? 'first' : 'second' });
     assert.equal(retry.body.booking.id, created.id);
     assert.equal(await Booking.countDocuments(), 1);
+    assert.equal((await call(provider, '/slots', 'DELETE', { startsAt: first })).status, 409);
+    const alerts = (await call(provider, '/notifications')).body.notifications;
+    assert.equal(alerts.length, 1); assert.equal(alerts[0].readAt, null);
+    assert.equal((await call(a, '/notifications')).status, 403);
+    assert.equal((await call(otherProvider, '/notifications')).body.notifications.length, 0);
+    const readPath = '/' + created.id + '/notifications/' + alerts[0].id + '/read';
+    assert.equal((await call(otherProvider, readPath, 'PATCH')).status, 404);
+    assert.equal((await call(otherProvider, '/' + created.id, 'PATCH', { action: 'confirm' })).status, 404);
+    assert.equal((await call(provider, readPath, 'PATCH')).status, 200);
+    assert.ok((await call(provider, '/notifications')).body.notifications[0].readAt);
+    assert.equal(created.history[0].status, 'pending');
     assert.equal(created.price, 4500); assert.equal(created.status, 'pending');
     assert.equal((await call(other, '/' + created.id, 'PATCH', { action: 'cancel' })).status, 404);
     assert.equal((await call(owner, '/' + created.id, 'PATCH', { action: 'confirm' })).status, 409);
@@ -94,7 +121,9 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal((await call(a, '', 'POST', { ...payload, requestId: 'stale' })).status, 409);
     const est = await call(a, '', 'POST', { ...payload, requestId: 'estimate', pricingVersion: estimate.body.pricing.version });
     assert.equal(est.status, 201); const eid = est.body.booking.id;
-    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'confirm' })).status, 409);
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'confirm' })).body.booking.status, 'awaiting_quote');
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'confirm' })).body.booking.status, 'awaiting_quote');
+    assert.equal((await call(provider, '/' + eid, 'PATCH', { action: 'start' })).status, 409);
     assert.equal((await pay(a, eid, { action: 'report', method: 'cash' })).status, 409);
     const quoteInput = { action: 'quote', scope: 'Replace outlet, labour and materials', items: [{ description: 'Labour', amount: 2000.25 }, { description: 'Parts', amount: 500.10 }], totalMinor: 1 };
     assert.equal((await call(a, '/' + eid, 'PATCH', quoteInput)).status, 409);
@@ -110,6 +139,7 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     if (decision.find(r => r.status === 200).body.booking.status !== 'cancelled') await call(a, '/' + eid, 'PATCH', { action: 'cancel' });
     const finalEst = await call(a, '', 'POST', { ...payload, requestId: 'estimate-final', pricingVersion: estimate.body.pricing.version });
     const fid = finalEst.body.booking.id;
+    await call(provider, '/' + fid, 'PATCH', { action: 'confirm' });
     await call(provider, '/' + fid, 'PATCH', quoteInput);
     await call(a, '/' + fid, 'PATCH', { action: 'approve_quote', quoteVersion: 1 });
     await call(provider, '/' + fid, 'PATCH', { action: 'start' });
@@ -137,6 +167,108 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal(repairDeclined.body.booking.status, 'completed'); assert.equal(repairDeclined.body.booking.invoice.totalMinor, 75000);
     assert.equal(repairDeclined.body.booking.invoice.inspectionOnly, true);
     assert.equal((await call(provider, '/' + iid, 'PATCH', quoteInput)).status, 409);
+
+    const allAlerts = (await call(provider, '/notifications')).body.notifications;
+    for (const kind of ['request', 'reschedule', 'cancel', 'approve_quote', 'decline_quote', 'payment']) assert.ok(allAlerts.some(n => n.kind === kind), 'Missing notification: ' + kind);
+    // A slot withdrawal racing a new request must never leave a booking for an unpublished time.
+    const raceSlot = new Date(day + 'T14:00:00+05:30').toISOString();
+    await call(provider, '/slots', 'POST', { startsAt: raceSlot });
+    const slotRace = await Promise.all([
+      call(a, '', 'POST', { ...payload, startsAt: raceSlot, requestId: 'withdraw-race', pricingVersion: inspection.body.pricing.version }),
+      call(provider, '/slots', 'DELETE', { startsAt: raceSlot }),
+    ]);
+    assert.ok((slotRace[0].status === 201 && slotRace[1].status === 409) || (slotRace[0].status === 409 && slotRace[1].status === 200), JSON.stringify(slotRace));
+    const remaining = (await call(a, '/availability/' + provider._id)).body.slots.find(s => s.startsAt === raceSlot);
+    if (slotRace[0].status === 201) assert.equal(remaining.available, false); else assert.equal(remaining, undefined);
+    const overdue = await call(b, '', 'POST', { ...payload, startsAt: second, requestId: 'overdue-test', pricingVersion: inspection.body.pricing.version });
+    assert.equal(overdue.status, 201);
+    await Booking.updateOne({ _id: overdue.body.booking.id }, { $set: { startsAt: new Date(Date.now() - 86400000) } }); // isolated test fixture
+    assert.equal((await call(provider, '/' + overdue.body.booking.id, 'PATCH', { action: 'confirm' })).status, 409);
+
+    // A provider without a schedule or pricing can receive requests, never invented reservations.
+    const request = { providerId: String(otherProvider._id), startsAt: first, scheduleMode: 'preferred', acceptQuoteRequest: true, problem: 'Inspect wiring', location: 'Test Street', requestId: 'preferred-a' };
+    const noSchedule = await call(a, '/availability/' + otherProvider._id);
+    assert.deepEqual(noSchedule.body.slots, []); assert.equal(noSchedule.body.pricing, null);
+    assert.equal((await call(a, '', 'POST', { ...request, acceptQuoteRequest: false })).status, 409);
+    const requests = await Promise.all([call(a, '', 'POST', request), call(b, '', 'POST', { ...request, requestId: 'preferred-b' })]);
+    assert.deepEqual(requests.map(r => r.status), [201, 201]);
+    for (const r of requests) assert.equal((await Booking.findById(r.body.booking.id)).slotKey, undefined);
+    assert.equal((await call(otherProvider, '/' + requests[0].body.booking.id, 'PATCH', quoteInput)).status, 409);
+    const confirmations = await Promise.all(requests.map(r => call(otherProvider, '/' + r.body.booking.id, 'PATCH', { action: 'confirm' })));
+    assert.deepEqual(confirmations.map(r => r.status).sort(), [200, 409]);
+    const confirmedIndex = confirmations.findIndex(r => r.status === 200), confirmedId = requests[confirmedIndex].body.booking.id;
+    assert.equal(confirmations[confirmedIndex].body.booking.status, 'awaiting_quote');
+    assert.equal(confirmations[confirmedIndex].body.booking.scheduleConfirmed, true);
+    await call(confirmedIndex === 0 ? a : b, '/' + confirmedId, 'PATCH', { action: 'cancel' });
+    await call(confirmedIndex === 0 ? b : a, '/' + requests[1 - confirmedIndex].body.booking.id, 'PATCH', { action: 'cancel' });
+
+    // Flexible requests permit starts inside the window; alternatives require explicit customer consent.
+    const windowEnd = new Date(day + 'T12:00:00+05:30').toISOString();
+    const flex = await call(a, '', 'POST', { ...request, scheduleMode: 'flexible', windowEnd, requestId: 'flex' });
+    assert.equal(flex.status, 201); const flexId = flex.body.booking.id;
+    assert.equal((await call(otherProvider, '/' + flexId, 'PATCH', { action: 'confirm', startsAt: third })).status, 409);
+    const proposed = await call(otherProvider, '/' + flexId, 'PATCH', { action: 'propose_time', startsAt: third });
+    assert.equal(proposed.status, 200); assert.equal(proposed.body.booking.status, 'time_proposed');
+    assert.equal((await call(b, '/' + flexId, 'PATCH', { action: 'accept_time', proposalVersion: proposed.body.booking.proposalVersion })).status, 404);
+    assert.equal((await call(a, '/' + flexId, 'PATCH', { action: 'accept_time', proposalVersion: 'stale' })).status, 409);
+    const declineTime = await call(a, '/' + flexId, 'PATCH', { action: 'decline_time', proposalVersion: proposed.body.booking.proposalVersion });
+    assert.equal(declineTime.body.booking.status, 'pending'); assert.equal(declineTime.body.booking.startsAt, first);
+    const inWindow = await call(otherProvider, '/' + flexId, 'PATCH', { action: 'confirm', startsAt: second });
+    assert.equal(inWindow.body.booking.startsAt, second); assert.equal(inWindow.body.booking.scheduleConfirmed, true);
+    await call(a, '/' + flexId, 'PATCH', { action: 'cancel' });
+
+    // Multi-hour appointments block different starts and retain actual schedule gaps.
+    assert.equal((await call(a, '/schedule-settings', 'PATCH', { durationMinutes: 180, bufferMinutes: 30 })).status, 403);
+    assert.equal((await call(otherProvider, '/schedule-settings', 'PATCH', { durationMinutes: 0, bufferMinutes: 30 })).status, 400);
+    assert.equal((await call(otherProvider, '/schedule-settings', 'PATCH', { durationMinutes: 180, bufferMinutes: 30 })).status, 200);
+    for (const startsAt of [first, second, third]) await call(otherProvider, '/slots', 'POST', { startsAt });
+    const alternatives = await call(a, '/alternatives/' + provider._id + '?startsAt=' + encodeURIComponent(first));
+    assert.ok(alternatives.body.providers.some(p => p.id === String(otherProvider._id)));
+    assert.equal(alternatives.body.providers[0].email, undefined);
+    const long = await call(a, '', 'POST', { ...request, scheduleMode: 'published', requestId: 'long' });
+    assert.equal(long.status, 201);
+    const overlap = await call(b, '', 'POST', { ...request, scheduleMode: 'published', startsAt: second, requestId: 'overlap' });
+    assert.equal(overlap.status, 409);
+    const gap = (await call(a, '/availability/' + otherProvider._id)).body.slots;
+    assert.equal(gap.find(s => s.startsAt === second).available, false); assert.equal(gap.find(s => s.startsAt === third).available, true);
+    const requestedBusy = await call(b, '', 'POST', { ...request, startsAt: second, requestId: 'request-busy' });
+    assert.equal(requestedBusy.status, 201);
+    assert.equal((await call(otherProvider, '/' + requestedBusy.body.booking.id, 'PATCH', { action: 'confirm' })).status, 409);
+    assert.equal((await call(a, '/alternatives/' + provider._id + '?startsAt=' + encodeURIComponent(second))).body.providers.length, 0);
+    const alternativeTime = await call(otherProvider, '/' + requestedBusy.body.booking.id, 'PATCH', { action: 'propose_time', startsAt: third });
+    const acceptedTime = await call(b, '/' + requestedBusy.body.booking.id, 'PATCH', { action: 'accept_time', proposalVersion: alternativeTime.body.booking.proposalVersion });
+    assert.equal(acceptedTime.status, 200); assert.equal(acceptedTime.body.booking.startsAt, third);
+    assert.equal((await call(otherProvider, '/' + requestedBusy.body.booking.id, 'PATCH', { action: 'start' })).status, 409);
+    // Moving an appointment releases its old reservation and preserves the agreed scope.
+    const nextDay = new Date(new Date(first).getTime() + 86400000).toISOString();
+    const movedRequest = await call(a, '/' + long.body.booking.id, 'PATCH', { action: 'reschedule', scheduleMode: 'preferred', startsAt: nextDay });
+    assert.equal(movedRequest.status, 200); assert.equal(movedRequest.body.booking.scheduleConfirmed, false);
+    assert.equal((await Booking.findById(long.body.booking.id)).slotKey, undefined);
+    assert.equal((await call(otherProvider, '/' + long.body.booking.id, 'PATCH', { action: 'confirm' })).status, 200);
+    // Different published starts must still serialize when their service intervals overlap.
+    const later = t => new Date(new Date(new Date(day + 'T' + t + ':00+05:30')).getTime() + 2 * 86400000).toISOString();
+    for (const startsAt of [later('08:00'), later('10:30')]) await call(otherProvider, '/slots', 'POST', { startsAt });
+    const intervalRace = await Promise.all([
+      call(a, '', 'POST', { ...request, scheduleMode: 'published', startsAt: later('08:00'), requestId: 'interval-a' }),
+      call(b, '', 'POST', { ...request, scheduleMode: 'published', startsAt: later('10:30'), requestId: 'interval-b' }),
+    ]);
+    assert.deepEqual(intervalRace.map(r => r.status).sort(), [201, 409]);
+    const occupiedRace = intervalRace.find(r => r.status === 201).body.booking;
+    const raceOwner = intervalRace[0].status === 201 ? a : b, raceOther = intervalRace[0].status === 201 ? b : a;
+    const ownAvailability = await call(raceOwner, '/availability/' + otherProvider._id + '?excludeBookingId=' + occupiedRace.id);
+    assert.equal(ownAvailability.body.slots.find(s => s.startsAt === occupiedRace.startsAt).available, true);
+    const otherAvailability = await call(raceOther, '/availability/' + otherProvider._id + '?excludeBookingId=' + occupiedRace.id);
+    assert.equal(otherAvailability.body.slots.find(s => s.startsAt === occupiedRace.startsAt).available, false);
+
+    // Suggestions do not hold times; customer acceptance rechecks availability atomically.
+    const suggestStart = new Date(new Date(first).getTime() + 4 * 86400000).toISOString();
+    const pref = await call(a, '', 'POST', { ...request, startsAt: suggestStart, requestId: 'suggest-race' });
+    const suggestion = await call(otherProvider, '/' + pref.body.booking.id, 'PATCH', { action: 'propose_time', startsAt: suggestStart });
+    await call(otherProvider, '/slots', 'POST', { startsAt: suggestStart });
+    assert.equal((await call(b, '', 'POST', { ...request, scheduleMode: 'published', startsAt: suggestStart, requestId: 'take-suggestion' })).status, 201);
+    assert.equal((await call(a, '/' + pref.body.booking.id, 'PATCH', { action: 'accept_time', proposalVersion: suggestion.body.booking.proposalVersion })).status, 409);
+    assert.equal((await Booking.findById(pref.body.booking.id)).status, 'time_proposed');
+    assert.equal((await Booking.findById(pref.body.booking.id)).slotKey, undefined);
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (mongoose.connection.readyState === 1 && mongoose.connection.name === dbName && /^fixmate_booking_test_[a-f0-9]{16}$/.test(dbName)) await mongoose.connection.db.dropDatabase();

@@ -51,7 +51,7 @@ function createPaymentController(Booking) {
         if (!req.user.isVerified || !req.user.isApprovedByAdmin || req.user.providerDetails?.approvalStatus !== 'approved') return res.status(403).json({ message: 'Provider approval is required.' });
         payment = action === 'confirm' ? { ...b.payment.toObject(), status: 'paid', paidAt: new Date(), confirmedBy: req.user._id, receipt: `RCPT-${b._id}` } : { status: 'unpaid' };
       } else return res.status(409).json({ message: 'This payment action is not available.' });
-      const updated = await Booking.findOneAndUpdate({ _id: b._id, ...owner, __v: b.__v }, { $set: { payment }, $inc: { __v: 1 } }, { returnDocument: 'after', runValidators: true });
+      const updated = await Booking.findOneAndUpdate({ _id: b._id, ...owner, __v: b.__v }, { $set: { payment }, $inc: { __v: 1 }, $push: { history: { status: b.status, action: 'payment_' + action, at: new Date() }, ...(!provider ? { providerNotifications: require('./bookingController').event('payment', 'Customer reported a payment. Confirm receipt.') } : {}) } }, { returnDocument: 'after', runValidators: true });
       if (!updated) return res.status(409).json({ message: 'Payment changed. Refresh before trying again.' });
       res.json({ booking: require('./bookingController').dto(updated) });
     } catch { res.status(503).json({ message: 'Unable to update payment. Please try again.' }); }
