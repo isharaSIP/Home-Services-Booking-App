@@ -72,6 +72,9 @@ const userSchema = new mongoose.Schema(
       nextAvailableAt: { type: Date, default: null },
       // Explicitly published appointment starts; never inferred from working days.
       bookingSlots: [{ type: Date }],
+      availabilityRevision: { type: Number, default: 0 },
+      appointmentDurationMinutes: { type: Number, min: 30, max: 480, default: 60 },
+      travelBufferMinutes: { type: Number, min: 0, max: 120, default: 30 },
       nicFront: { type: String, default: "" }, // Base64 or Image URI (Required for Provider)
       nicBack: { type: String, default: "" },  // Base64 or Image URI (Required for Provider)
       certificates: [{ type: String }],         // Array of Base64 or Image URIs (Optional)

@@ -6,8 +6,13 @@ const controller = createBookingController(require('../models/Booking'), require
 router.use(protect);
 router.get('/pricing', authorizeRoles('provider'), controller.getPricing);
 router.patch('/pricing', authorizeRoles('provider'), controller.savePricing);
+router.patch('/schedule-settings', authorizeRoles('provider'), controller.saveScheduleSettings);
+router.get('/alternatives/:providerId', authorizeRoles('customer'), controller.alternatives);
 router.get('/availability/:providerId', authorizeRoles('customer', 'provider'), controller.availability);
 router.post('/slots', authorizeRoles('provider'), controller.publishSlot);
+router.delete('/slots', authorizeRoles('provider'), controller.removeSlot);
+router.get('/notifications', authorizeRoles('provider'), controller.notifications);
+router.patch('/:id/notifications/:eventId/read', authorizeRoles('provider'), controller.readNotification);
 router.get('/', authorizeRoles('customer', 'provider'), controller.list);
 router.post('/', authorizeRoles('customer'), controller.create);
 router.patch('/:id', authorizeRoles('customer', 'provider'), controller.update);
