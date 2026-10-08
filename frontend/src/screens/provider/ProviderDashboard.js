@@ -1,256 +1,149 @@
-import React, { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { bookingService, BOOKING_TIMES, bookingDate, bookingTime, bookingWhen, bookingPreference, bookingPrice, money } from '../../services/bookingService';
-import { BookingCharges } from '../customer/BookingsScreen';
-import { COLORS } from '../../constants/theme';
-import { authService } from '../../services/authService';
-import ProfileScreen from '../customer/ProfileScreen';
-import MessagesScreen from '../customer/MessagesScreen';
-import { useAuth } from '../../context/AuthContext';
-const LABELS = {
-  pending: 'New request',
-  time_proposed: 'Time suggested',
-  awaiting_quote: 'Quote needed',
-  confirmed: 'Confirmed',
-  inspection_confirmed: 'Inspection booked',
-  inspecting: 'Inspection complete',
-  quote_pending: 'Awaiting approval',
-  ongoing: 'In progress',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  rejected: 'Declined'
+import React from "react";
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  Switch,
+  StatusBar,
+  StyleSheet,
+  Alert,
+} from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useIsFocused } from "@react-navigation/native";
+import { COLORS, SHADOWS } from "../../constants/theme";
+import { useAuth } from "../../context/AuthContext";
+import { useProviderData } from "../../context/ProviderContext";
+import Avatar from "../../components/provider/Avatar";
+import {
+  PROVIDER,
+  EARNINGS,
+  TODAY_SCHEDULE,
+  formatMoney,
+} from "../../constants/providerData";
+
+const STATUS_STYLES = {
+  "In Progress": { bg: "#E3EDFD", text: "#2F5FD0" },
+  Upcoming: { bg: "#EEEAFD", text: COLORS.primary },
+  Completed: { bg: "#DDF5EA", text: "#0F8A5F" },
 };
-const ACTIVITY = {
-  request: 'Request received',
-  confirm: 'Job accepted',
-  propose_time: 'Alternative time suggested',
-  accept_time: 'Customer accepted suggested time',
-  decline_time: 'Customer kept requested time',
-  reject: 'Request declined',
-  quote: 'Quote sent',
-  approve_quote: 'Quote approved',
-  decline_quote: 'Quote declined',
-  start: 'Work started',
-  inspect: 'Inspection performed',
-  complete: 'Work completed',
-  reschedule: 'Appointment rescheduled',
-  cancel: 'Booking cancelled',
-  payment_report: 'Payment reported',
-  payment_confirm: 'Payment received',
-  payment_reject: 'Payment not received'
-};
-const CLOSED = ['completed', 'cancelled', 'rejected'];
-const TABS = [['Home', 'view-dashboard-outline'], ['Available', 'briefcase-search-outline'], ['Availability', 'calendar-month-outline'], ['Messages', 'message-outline'], ['Profile', 'account-outline']];
-const dayKey = value => new Date(new Date(value).getTime() + 19800000).toISOString().slice(0, 10);
-const messageFor = error => error.response?.data?.message || 'Unable to connect. Check your connection and try again.';
-const initials = name => (name || '').trim().split(/\s+/).slice(0, 2).map(s => s[0]).join('').toUpperCase();
-const Icon = ({
-  name,
-  color = COLORS.primary,
-  size = 22
-}) => <MaterialCommunityIcons accessible={false} name={name} color={color} size={size} />;
-function Btn({
-  title,
-  onPress,
-  secondary,
-  danger,
-  disabled,
-  icon
-}) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{
-    disabled: !!disabled
-  }} disabled={disabled} onPress={onPress} style={[styles.button, secondary && styles.secondary, danger && styles.danger, disabled && styles.disabled]}>{icon && <Icon name={icon} color={secondary ? COLORS.primary : '#FFF'} size={19} />}<Text style={[styles.buttonText, secondary && styles.link, danger && {
-      color: '#A52737'
-    }]}>{title}</Text></Pressable>;
-}
-function Badge({ status }) {
-  const tone = ['completed'].includes(status) ? { background: '#E7F8F0', text: '#128560' } : ['cancelled', 'rejected'].includes(status) ? { background: '#FFF0F0', text: '#B34550' } : ['pending', 'time_proposed', 'quote_pending'].includes(status) ? { background: '#FFF7E5', text: '#976A16' } : { background: '#EEEAFE', text: COLORS.primary };
-  return <View style={[styles.badge, { backgroundColor: tone.background }]}><Text style={[styles.badgeText, { color: tone.text }]}>{LABELS[status] || status}</Text></View>;
-}
-function Disclosure({ title, subtitle, icon = 'tune-variant', children }) {
-  const [open, setOpen] = useState(false);
-  return <View style={styles.card}><Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} style={styles.row}><View style={styles.sectionIcon}><Icon name={icon} size={20} /></View><View style={styles.flex}><Text style={styles.cardTitle}>{title}</Text>{!!subtitle && <Text style={styles.caption}>{subtitle}</Text>}</View><Icon name={open ? 'chevron-up' : 'chevron-down'} size={20} /></Pressable>{open && <View style={styles.disclosureBody}>{children}</View>}</View>;
-}
-function Empty({
-  icon,
-  title,
-  text,
-  action,
-  onPress
-}) {
-  return <View style={styles.empty}><View style={styles.emptyIcon}><Icon name={icon} size={36} /></View><Text style={styles.sectionTitle}>{title}</Text><Text style={[styles.body, styles.center]}>{text}</Text>{action && <Btn secondary title={action} onPress={onPress} />}</View>;
-}
-function ErrorCard({
-  text,
-  retry
-}) {
-  return <View style={styles.error}><Icon name="wifi-off" color="#A52737" /><Text accessibilityRole="alert" style={styles.errorText}>{text}</Text><Btn secondary title="Try again" onPress={retry} /></View>;
-}
-function Info({
-  label,
-  children
-}) {
-  return <View style={styles.info}><Text style={styles.caption}>{label}</Text><Text style={styles.bodyDark}>{children}</Text></View>;
-}
-function JobCard({ job, onPress, compact, onDecline }) {
-  if (compact) return <Pressable accessibilityRole="button" accessibilityLabel={'View job from ' + job.customerName} onPress={onPress} style={styles.jobCompact}><View style={styles.sectionIcon}><Icon name="briefcase-outline" size={20} /></View><View style={styles.flex}><Text style={styles.cardTitle}>{job.service}</Text><Text style={styles.caption}>{bookingPreference(job)}</Text><Text style={styles.caption}>Client: {job.customerName}</Text><Text style={styles.priceCaption}>{bookingPrice(job)}</Text></View><View style={styles.compactStatus}><Badge status={job.status} /><Icon name="chevron-right" size={18} /></View></Pressable>;
-  return <View style={styles.card}><View style={styles.between}><View style={styles.flex}><Text style={styles.sectionTitle}>{job.service}</Text><Text style={styles.body}>Client: {job.customerName}</Text></View><Badge status={job.status} /></View><Text style={styles.requestPrice}>{bookingPrice(job)}</Text><View style={styles.requestMeta}><View style={styles.row}><Icon name="calendar-outline" size={17} /><Text style={[styles.body, styles.flex]}>{bookingPreference(job)}</Text></View><View style={styles.row}><Icon name="map-marker-outline" size={17} /><Text numberOfLines={2} style={[styles.body, styles.flex]}>{job.location}</Text></View></View><Text numberOfLines={2} style={styles.bodyDark}>{job.problem}</Text><View style={styles.actionRow}>{onDecline && <View style={styles.flex}><Btn secondary title="Decline" onPress={onDecline} /></View>}<View style={styles.flex}><Btn title="View Details" onPress={onPress} /></View></View>{job.payment?.status === 'awaiting_confirmation' && <Text style={styles.link}>Payment reported · confirm receipt</Text>}</View>;
-}
-export default function ProviderDashboard() {
-  const {
-      user,
-      updateUserSession
-    } = useAuth(),
-    insets = useSafeAreaInsets();
-  const [pausing, setPausing] = useState(false),
-    [pauseError, setPauseError] = useState('');
-  const pauseLock = useRef(false);
-  async function toggleRequests() {
-    if (pauseLock.current) return;
-    pauseLock.current = true;
-    setPausing(true);
-    setPauseError('');
-    try {
-      const updated = await authService.updateProfile({
-        acceptingRequests: user.providerDetails?.acceptingRequests === false
-      });
-      await updateUserSession(updated);
-    } catch (e) {
-      setPauseError(messageFor(e));
-    } finally {
-      pauseLock.current = false;
-      setPausing(false);
-    }
-  }
-  const [alertFilter, setAlertFilter] = useState('All alerts'), [detailAction, setDetailAction] = useState(null);
-  const [tab, setTab] = useState('Home'),
-    [filter, setFilter] = useState('Active'),
-    [query, setQuery] = useState('');
-  const [rows, setRows] = useState([]),
-    [notifications, setNotifications] = useState([]),
-    [slots, setSlots] = useState([]),
-    [settings, setSettings] = useState(null);
-  const [errors, setErrors] = useState({}),
-    [loading, setLoading] = useState(true),
-    [detailId, setDetailId] = useState(null);
-  const request = useRef(null),
-    revision = useRef(0);
-  const userId = user?._id || user?.id;
-  const load = useCallback(() => {
-    request.current?.abort();
-    const controller = new AbortController();
-    request.current = controller;
-    const version = revision.current;
-    const tasks = [['jobs', () => bookingService.list(controller.signal), setRows], ['alerts', () => bookingService.notifications(controller.signal), setNotifications], ['slots', () => bookingService.availability(userId, controller.signal), result => {
-      setSlots(result.slots);
-      setSettings({
-        durationMinutes: result.durationMinutes,
-        bufferMinutes: result.bufferMinutes
-      });
-    }]];
-    return Promise.allSettled(tasks.map(async ([key, read, set]) => {
-      try {
-        const result = await read();
-        if (!controller.signal.aborted && version === revision.current) {
-          set(result);
-          setErrors(current => ({
-            ...current,
-            [key]: ''
-          }));
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setErrors(current => ({
-          ...current,
-          [key]: messageFor(error)
-        }));
-      }
-    })).finally(() => {
-      if (!controller.signal.aborted) setLoading(false);
-    });
-  }, [userId]);
-  useFocusEffect(useCallback(() => {
-    void load();
-    const timer = setInterval(load, 30000);
-    return () => {
-      request.current?.abort();
-      clearInterval(timer);
-    };
-  }, [load]));
-  function updateJob(job) {
-    revision.current++;
-    setRows(current => current.map(row => row.id === job.id ? job : row));
-  }
-  function refresh() {
-    setLoading(true);
-    void load();
-  }
-  const detail = rows.find(job => job.id === detailId);
-  const pending = rows.filter(job => job.status === 'pending').sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
-  const active = rows.filter(job => job.status !== 'pending' && !CLOSED.includes(job.status)).sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
-  const today = active.filter(job => dayKey(job.startsAt) === dayKey(new Date()));
-  const unread = notifications.filter(n => !n.readAt).length;
-  const now = Date.now();
-  const received = rows.filter(b => b.payment?.status === 'paid' && b.payment?.paidAt);
-  const totalFor = (from, to) => received.filter(b => new Date(b.payment.paidAt).getTime() >= from && new Date(b.payment.paidAt).getTime() < to).reduce((sum, b) => sum + (b.invoice?.totalMinor || 0), 0);
-  const weekly = totalFor(now - 7 * 86400000, now + 1), previous = totalFor(now - 14 * 86400000, now - 7 * 86400000);
-  const change = previous > 0 ? Math.round((weekly - previous) / previous * 100) : null;
-  const outstanding = rows.filter(b => b.invoice && b.payment?.status !== 'paid' && !['cancelled', 'rejected'].includes(b.status)).reduce((sum, b) => sum + b.invoice.totalMinor, 0);
-  const online = user.providerDetails?.acceptingRequests !== false;
-  const morning = today.filter(b => Number(new Date(new Date(b.startsAt).getTime() + 19800000).toISOString().slice(11, 13)) < 12).length;
-  const statsReady = !loading && !errors.jobs;
-  const openJobs = (value = 'Active') => { setFilter(value); setQuery(''); setTab('My Jobs'); };
-  const search = jobs => jobs.filter(b => `${b.customerName} ${b.service} ${b.problem} ${b.location} ${b.reference}`.toLowerCase().includes(query.trim().toLowerCase()));
-  const visible = tab === 'Available' ? search(pending) : search(rows.filter(b => filter === 'Active' ? b.status !== 'pending' && !CLOSED.includes(b.status) : filter === 'Completed' ? b.status === 'completed' : ['cancelled', 'rejected'].includes(b.status)).sort((a, b) => filter === 'Active' ? new Date(a.startsAt) - new Date(b.startsAt) : new Date(b.startsAt) - new Date(a.startsAt)));
-  const filteredNotifications = notifications.filter(n => alertFilter === 'All alerts' || (alertFilter === 'Payments' ? (n.kind || '').includes('payment') : !n.kind.includes('payment')));
-  function openJob(id, action = null) { setDetailAction(action); setDetailId(id); }
-  async function openNotification(n) {
-    try {
-      await bookingService.readNotification(n.bookingId, n.id);
-      revision.current++;
-      setNotifications(all => all.map(item => item.id === n.id ? {
-        ...item,
-        readAt: new Date().toISOString()
-      } : item));
-      setErrors(current => ({
-        ...current,
-        alerts: ''
-      }));
-      if (!rows.some(b => b.id === n.bookingId)) await load();
-      openJob(n.bookingId);
-    } catch (error) {
-      setErrors(current => ({
-        ...current,
-        alerts: messageFor(error)
-      }));
-    }
-  }
-  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.screen, {
-    paddingTop: tab === "Home" ? 0 : insets.top
-  }]}><StatusBar barStyle={tab === "Home" ? "light-content" : "dark-content"} backgroundColor={tab === "Home" ? COLORS.primary : "#F9F8FD"} />
-    {tab !== "Home" && <View style={styles.header}><View style={styles.flex}><Text style={styles.eyebrow}>FIXMATE · PROVIDER</Text><Text accessibilityRole="header" style={styles.title}>{tab === 'Home' ? 'Your work, organised' : tab === 'Available' ? 'Available Jobs' : tab === 'Alerts' ? 'Notifications' : tab === 'Availability' ? 'Manage availability' : tab === 'Profile' ? 'Profile & earnings' : tab === 'Messages' ? 'Messages' : 'My Jobs'}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={`Notifications, ${unread} unread`} onPress={() => setTab('Alerts')} style={styles.iconButton}><Icon name="bell-outline" />{unread > 0 && <View style={styles.unreadDot} />}</Pressable></View>}
-    {tab === 'Messages' ? <MessagesScreen embedded /> : tab === 'Profile' ? <ProfileScreen embedded><ProviderEarnings rows={rows} error={errors.jobs || (loading ? 'Loading earnings…' : '')} /><View style={styles.card}><Text style={styles.sectionTitle}>Services & pricing</Text><Disclosure title="Edit pricing & bank details" subtitle="Published prices, scope and payment instructions" icon="cash-multiple"><PricingEditor /></Disclosure><Btn secondary title="Manage appointment duration & availability" onPress={() => setTab('Availability')} /><Btn secondary title="Customer messages" onPress={() => setTab('Messages')} /></View></ProfileScreen> : <ScrollView key={tab} keyboardShouldPersistTaps="handled" contentContainerStyle={tab === "Home" ? styles.dashboardContent : styles.content} refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}>
-      {loading && tab !== "Home" && <ActivityIndicator accessibilityLabel="Loading provider workspace" color={COLORS.primary} />}
-      {tab === 'Home' && <>
-        <View style={[styles.dashboardHero, { paddingTop: insets.top + 24 }]}>
-          <View style={styles.row}><Pressable accessibilityRole="button" accessibilityLabel="Open provider profile" onPress={() => setTab('Profile')} style={styles.dashboardAvatar}><Text style={styles.dashboardInitials}>{initials(user.name)}</Text></Pressable><View style={styles.flex}><Text style={styles.dashboardGreeting}>Hello, {(user.name || 'there').trim().split(/\s+/)[0]}</Text><Text numberOfLines={2} style={styles.dashboardSubtitle}>{[user.providerDetails?.category, user.providerDetails?.serviceArea].filter(Boolean).join(' · ') || 'Complete your service profile'}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={'Notifications, ' + unread + ' unread'} onPress={() => setTab('Alerts')} style={styles.dashboardBell}><Icon name="bell-outline" color="#FFF" size={27} />{unread > 0 && <View style={styles.heroDot} />}</Pressable></View>
-          <View style={[styles.between, { marginTop: 28 }]}><View style={styles.flex}><Text style={styles.onlineTitle}>{online ? 'You are online' : 'You are offline'}</Text><Text style={styles.dashboardSubtitle}>{online ? 'Accepting new requests in your areas' : 'New requests paused · existing jobs stay scheduled'}</Text></View><Switch accessibilityLabel="Accept new booking requests" value={online} disabled={pausing} onValueChange={toggleRequests} trackColor={{ false: '#AEA0DF', true: '#BFB0FF' }} thumbColor="#FFF" />{pausing && <ActivityIndicator color="#FFF" />}</View>{!!pauseError && <Text accessibilityRole="alert" style={styles.white}>{pauseError}</Text>}
+
+const GREEN = "#0F8A5F";
+
+// ---------------------------------------------------------------------------
+// Pieces
+// ---------------------------------------------------------------------------
+const StatTile = ({ icon, iconColor, tileBg, value, label, sub, onPress }) => (
+  <Pressable
+    onPress={onPress}
+    disabled={!onPress}
+    style={({ pressed }) => [styles.tile, pressed && styles.pressed]}
+  >
+    <View style={[styles.tileIcon, { backgroundColor: tileBg }]}>
+      <MaterialCommunityIcons name={icon} size={20} color={iconColor} />
+    </View>
+    <Text style={styles.tileValue}>{value}</Text>
+    <Text style={styles.tileLabel}>{label}</Text>
+    <Text style={styles.tileSub}>{sub}</Text>
+  </Pressable>
+);
+
+const ScheduleCard = ({ item }) => {
+  const status = STATUS_STYLES[item.status] || STATUS_STYLES.Upcoming;
+  return (
+    <View style={styles.slot}>
+      <View style={styles.slotTime}>
+        <Text style={styles.slotTimeText}>{item.time}</Text>
+        <Text style={styles.slotPeriod}>{item.period}</Text>
+      </View>
+      <View style={styles.slotDivider} />
+      <View style={styles.slotBody}>
+        <View style={styles.slotTop}>
+          <Text style={styles.slotTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+          <View style={[styles.pill, { backgroundColor: status.bg }]}>
+            <View style={[styles.pillDot, { backgroundColor: status.text }]} />
+            <Text style={[styles.pillText, { color: status.text }]}>{item.status}</Text>
+          </View>
         </View>
-        <View style={styles.dashboardBody}>
-          <View style={styles.earningsSummary}><View style={styles.between}><View style={styles.flex}><Text style={styles.dashboardMuted}>Earnings this week</Text><Text style={styles.earningsAmount}>{statsReady ? money(weekly).replace('.00', '') : '—'}</Text></View><View style={styles.tileIcon}><Icon name="wallet-outline" size={25} /></View></View><Text style={[styles.earningsTrend, change !== null && change < 0 && { color: '#B24747' }]}>{!statsReady ? 'Waiting for booking data' : change === null ? 'Confirmed payments · last 7 days' : (change >= 0 ? '↗ +' : '↘ ') + change + '% vs previous 7 days'}</Text><View style={styles.earningsFooter}><View style={styles.flex}><Text style={styles.dashboardMuted}>Awaiting payment</Text><Text style={styles.tileSubtitle}>{statsReady ? money(outstanding) : '—'}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="View earnings details" onPress={() => setTab('Profile')} style={styles.dashboardLink}><Text style={styles.link}>Earnings detail</Text><Icon name="arrow-right" size={19} /></Pressable></View></View>
-          {loading && <ActivityIndicator accessibilityLabel="Loading provider workspace" color={COLORS.primary} />}{!!errors.jobs && <ErrorCard text={errors.jobs} retry={refresh} />}
-          <View style={styles.dashboardGrid}>{[
-            { label: "Today's bookings", value: statsReady ? today.length : '—', note: statsReady ? morning + ' in the morning' : 'Loading bookings', icon: 'clock-outline', onPress: () => openJobs() },
-            { label: 'Pending requests', value: statsReady ? pending.length : '—', note: 'Awaiting your response', icon: 'bell-outline', color: '#D78A18', background: '#FFF4DC', onPress: () => { setQuery(''); setTab('Available'); } },
-            { label: 'Completed jobs', value: statsReady ? rows.filter(b => b.status === 'completed').length : '—', note: 'All time', icon: 'briefcase-outline', onPress: () => openJobs('Completed') },
-            { label: 'Average rating', value: user.providerDetails?.rating == null ? 'New' : Number(user.providerDetails.rating).toFixed(1), note: (user.providerDetails?.reviewCount || 0) + ' reviews', icon: 'star-outline', color: '#148565', background: '#DDF5EB', onPress: () => setTab('Profile') }
-          ].map(item => <Pressable key={item.label} accessibilityRole="button" accessibilityLabel={item.label} onPress={item.onPress} style={styles.dashboardTile}><View style={[styles.tileIcon, item.background && { backgroundColor: item.background }]}><Icon name={item.icon} color={item.color || COLORS.primary} size={25} /></View><Text style={styles.tileValue}>{item.value}</Text><Text style={styles.tileLabel}>{item.label}</Text><Text style={styles.tileSubtitle}>{item.note}</Text></Pressable>)}</View>
-          <View style={styles.between}><Text style={styles.sectionTitle}>Today’s schedule</Text><Pressable accessibilityRole="button" accessibilityLabel="Open full calendar" onPress={() => setTab('Availability')} style={styles.dashboardLink}><Text style={styles.link}>Full calendar</Text><Icon name="chevron-right" size={19} /></Pressable></View>
-          {!errors.jobs && today.map(job => <Pressable key={job.id} accessibilityRole="button" accessibilityLabel={'View job from ' + job.customerName} onPress={() => openJob(job.id)} style={styles.scheduleRow}><View style={styles.scheduleTime}><Text style={styles.scheduleHour}>{bookingTime(job.startsAt).split(' ')[0]}</Text><Text style={styles.tileSubtitle}>{bookingTime(job.startsAt).split(' ')[1]}</Text></View><View style={styles.flex}><Text numberOfLines={2} style={styles.tileLabel}>{job.service}</Text><Text numberOfLines={2} style={styles.scheduleCustomer}>{job.customerName} · {job.reference.slice(-8)}</Text></View><View style={[styles.scheduleBadge, job.status === 'ongoing' && { backgroundColor: '#E3EEFF' }]}><Text style={[styles.scheduleStatus, job.status === 'ongoing' && { color: '#3267B1' }]}>{job.status === 'confirmed' ? 'Upcoming' : LABELS[job.status] || job.status}</Text></View></Pressable>)}
-          {!loading && !errors.jobs && !today.length && <Empty icon="calendar-check-outline" title="No appointments today" text="Your accepted appointments will appear here. Publish your available times for customers." action="Manage availability" onPress={() => setTab('Availability')} />}
-          <Btn secondary title="View all my jobs" onPress={() => openJobs()} />
+        <Text style={styles.slotSub} numberOfLines={1}>
+          {item.customer} · {item.jobId}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
+const ProviderDashboard = ({ navigation }) => {
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const focused = useIsFocused();
+  const { online, setOnline, pendingCount, urgentCount } = useProviderData();
+
+  const name = user?.name || "Service Provider";
+  const firstName = name.trim().split(/\s+/)[0];
+  const morning = TODAY_SCHEDULE.filter((s) => s.period === "AM").length;
+  const comingSoon = (title) => Alert.alert(title, "Coming soon.");
+
+  return (
+    <View style={styles.screen}>
+      {focused && <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />}
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* Hero */}
+        <View style={[styles.hero, { paddingTop: insets.top + 14 }]}>
+          <View style={styles.heroTop}>
+            <Avatar
+              name={name}
+              uri={user?.avatar || user?.profileImage}
+              size={52}
+              radius={16}
+              tone="white"
+            />
+            <View style={styles.heroText}>
+              <Text style={styles.greeting} numberOfLines={1}>
+                Hello, {firstName}
+              </Text>
+              <Text style={styles.heroSub} numberOfLines={1}>
+                {PROVIDER.category} · {PROVIDER.area}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => comingSoon("Notifications")}
+              accessibilityRole="button"
+              accessibilityLabel="Notifications"
+              style={({ pressed }) => [styles.bell, pressed && styles.pressed]}
+            >
+              <MaterialCommunityIcons name="bell-outline" size={22} color="#FFFFFF" />
+              <View style={styles.bellDot} />
+            </Pressable>
+          </View>
+
+          <View style={styles.onlineRow}>
+            <View style={styles.onlineText}>
+              <Text style={styles.onlineTitle}>
+                {online ? "You are online" : "You are offline"}
+              </Text>
+              <Text style={styles.onlineSub}>
+                {online
+                  ? "Accepting new requests in your areas"
+                  : "You will not receive new requests"}
+              </Text>
+            </View>
+            <Switch
+              value={online}
+              onValueChange={setOnline}
+              trackColor={{ false: "rgba(255,255,255,0.35)", true: "#FFFFFF" }}
+              thumbColor={online ? COLORS.primary : "#FFFFFF"}
+              ios_backgroundColor="rgba(255,255,255,0.35)"
+              accessibilityLabel="Online status"
+            />
+          </View>
         </View>
       </>}
       {['Available', 'My Jobs'].includes(tab) && <>
@@ -508,388 +401,254 @@ const styles = StyleSheet.create({
   formField: { gap: 4, marginTop: 14 },
   fieldLabel: { color: '#354059', fontSize: 12, fontWeight: '600' },
 
-  dashboardContent: { paddingBottom: 28, width: '100%', maxWidth: 760, alignSelf: 'center' },
-  dashboardHero: { backgroundColor: COLORS.primary, paddingHorizontal: 20, paddingBottom: 76 },
-  dashboardAvatar: { width: 58, height: 58, borderRadius: 19, backgroundColor: '#FFF', alignItems: 'center', justifyContent: 'center' },
-  dashboardInitials: { color: COLORS.primary, fontSize: 21, fontWeight: '800' },
-  dashboardGreeting: { color: '#FFF', fontSize: 23, fontWeight: '750' },
-  dashboardSubtitle: { color: '#F0EAFF', fontSize: 12, lineHeight: 19, marginTop: 4 },
-  dashboardBell: { width: 48, height: 48, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.17)', alignItems: 'center', justifyContent: 'center' },
-  heroDot: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, backgroundColor: '#FFF', borderRadius: 4 },
-  onlineTitle: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-  dashboardBody: { paddingHorizontal: 20, gap: 18 },
-  earningsSummary: { marginTop: -42, padding: 20, borderRadius: 25, backgroundColor: '#FFF', boxShadow: '0px 2px 4px rgba(20,20,30,0.12)' },
-  dashboardMuted: { color: '#78838A', fontSize: 13, lineHeight: 20 },
-  earningsAmount: { fontSize: 30, fontWeight: '800', color: '#292C2C', marginTop: 5 },
-  earningsTrend: { color: '#148565', fontSize: 12, fontWeight: '700', marginTop: 14 },
-  earningsFooter: { flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: '#F3F3F5', paddingTop: 15, marginTop: 20 },
-  dashboardLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dashboardGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 14 },
-  dashboardTile: { width: '47.5%', backgroundColor: '#FFF', borderRadius: 25, padding: 18, minHeight: 174, boxShadow: '0px 2px 4px rgba(20,20,30,0.12)' },
-  tileIcon: { width: 46, height: 46, borderRadius: 15, backgroundColor: '#EFEAFB', alignItems: 'center', justifyContent: 'center' },
-  tileValue: { fontSize: 31, fontWeight: '800', color: '#292C2C', marginTop: 19, marginBottom: 6 },
-  tileLabel: { fontSize: 14, fontWeight: '700', color: '#292C2C', lineHeight: 20 },
-  tileSubtitle: { fontSize: 12, color: '#78838A', lineHeight: 19, marginTop: 3 },
-  scheduleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: '#FFF', borderRadius: 23, minHeight: 84, boxShadow: '0px 2px 4px rgba(20,20,30,0.12)' },
-  scheduleTime: { width: 52, borderRightWidth: 1, borderRightColor: '#F0F0F2', paddingRight: 10 },
-  scheduleHour: { fontSize: 16, fontWeight: '750', color: '#292C2C' },
-  scheduleCustomer: { fontSize: 11, color: '#78838A', lineHeight: 17, marginTop: 6 },
-  scheduleBadge: { backgroundColor: '#EEE8FC', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 6, maxWidth: 85, alignSelf: 'flex-start' },
-  scheduleStatus: { fontSize: 9, fontWeight: '700', color: COLORS.primary },
-  requestBadge: { position: 'absolute', top: 0, right: '18%', minWidth: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center' },
-  requestBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '700' },
+        {/* Earnings card (overlaps hero) */}
+        <View style={styles.earnings}>
+          <View style={styles.earningsTop}>
+            <View style={styles.earningsText}>
+              <Text style={styles.earningsLabel}>Earnings this week</Text>
+              <Text style={styles.earningsValue}>{formatMoney(EARNINGS.week)}</Text>
+              <View style={styles.trendRow}>
+                <MaterialCommunityIcons name="trending-up" size={16} color={GREEN} />
+                <Text style={styles.trendText}>+{EARNINGS.weekGrowth}% vs last week</Text>
+              </View>
+            </View>
+            <View style={styles.walletTile}>
+              <MaterialCommunityIcons name="wallet-outline" size={22} color={COLORS.primary} />
+            </View>
+          </View>
 
-  screen: {
-    flex: 1,
-    backgroundColor: '#F9F8FD'
-  },
-  header: {
-    padding: 20,
-    paddingBottom: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center'
-  },
-  content: {
-    padding: 20,
-    paddingTop: 8,
-    paddingBottom: 28,
-    gap: 16,
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center',
-    flexGrow: 1
-  },
-  flex: {
-    flex: 1,
-    minWidth: 0
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10
-  },
-  between: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8
-  },
-  title: {
-    fontSize: 23,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    flexShrink: 1
-  },
-  eyebrow: {
-    color: COLORS.primary,
-    fontSize: 10,
-    letterSpacing: 1.3,
-    fontWeight: '700',
-    marginBottom: 6
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary
-  },
-  body: {
-    color: '#716E7F',
-    fontSize: 13,
-    lineHeight: 20
-  },
-  bodyDark: {
-    color: '#30303A',
-    fontSize: 14,
-    lineHeight: 21
-  },
-  caption: {
-    color: '#797586',
-    fontSize: 11,
-    lineHeight: 17
-  },
-  center: {
-    textAlign: 'center'
-  },
-  link: {
-    color: COLORS.primary,
-    fontSize: 13,
-    fontWeight: '600'
-  },
-  white: {
-    color: '#FFF'
-  },
-  card: {
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#ECECF4',
-    borderRadius: 14,
-    padding: 18,
-    gap: 12,
-    boxShadow: '0px 3px 14px rgba(39,39,39,0.05)'
-  },
-  cardFoot: {
-    borderTopWidth: 1,
-    borderTopColor: '#F0EDF6',
-    paddingTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    backgroundColor: '#EEE8FF',
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  avatarText: {
-    color: COLORS.primary,
-    fontWeight: '700'
-  },
-  badge: {
-    backgroundColor: '#EEE8FF',
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 10
-  },
-  badgeText: {
-    color: '#6853A1',
-    fontSize: 10,
-    fontWeight: '600'
-  },
-  neutralBadge: {
-    backgroundColor: '#F0F1F5'
-  },
+          <View style={styles.earningsDivider} />
+
+          <View style={styles.payoutRow}>
+            <Text style={styles.payoutText}>
+              Pending payout{" "}
+              <Text style={styles.payoutValue}>{formatMoney(EARNINGS.pendingPayout)}</Text>
+            </Text>
+            <Pressable
+              onPress={() => navigation.navigate("Profile")}
+              style={styles.detailLink}
+              accessibilityRole="link"
+            >
+              <Text style={styles.link}>Earnings detail</Text>
+              <MaterialCommunityIcons name="arrow-right" size={16} color={COLORS.primary} />
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.body}>
+          {/* Stats */}
+          <View style={styles.grid}>
+            <StatTile
+              icon="clock-outline"
+              iconColor={COLORS.primary}
+              tileBg="#EEEAFD"
+              value={String(TODAY_SCHEDULE.length)}
+              label="Today's bookings"
+              sub={`${morning} in the morning`}
+              onPress={() => navigation.navigate("Calendar")}
+            />
+            <StatTile
+              icon="bell-outline"
+              iconColor="#D9840B"
+              tileBg="#FEF3DC"
+              value={String(pendingCount)}
+              label="Pending requests"
+              sub={urgentCount > 0 ? `${urgentCount} marked urgent` : "None urgent"}
+              onPress={() => navigation.navigate("Requests")}
+            />
+            <StatTile
+              icon="briefcase-outline"
+              iconColor={COLORS.primary}
+              tileBg="#EEEAFD"
+              value={String(PROVIDER.jobsDone)}
+              label="Completed jobs"
+              sub="All time"
+            />
+            <StatTile
+              icon="star-outline"
+              iconColor={GREEN}
+              tileBg="#DDF5EA"
+              value={PROVIDER.rating.toFixed(1)}
+              label="Average rating"
+              sub={`${PROVIDER.reviews} reviews`}
+            />
+          </View>
+
+          {/* Today's schedule */}
+          <View style={styles.sectionRow}>
+            <Text style={styles.sectionTitle}>Today's schedule</Text>
+            <Pressable
+              onPress={() => navigation.navigate("Calendar")}
+              style={styles.detailLink}
+              accessibilityRole="link"
+            >
+              <Text style={styles.link}>Full calendar</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.primary} />
+            </Pressable>
+          </View>
+
+          {TODAY_SCHEDULE.map((item) => (
+            <ScheduleCard key={item.id} item={item} />
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: COLORS.background },
+  scrollContent: { paddingBottom: 28 },
+  pressed: { opacity: 0.85 },
+
+  // Hero
   hero: {
     backgroundColor: COLORS.primary,
-    borderRadius: 20,
-    padding: 22,
-    gap: 12
+    paddingHorizontal: 20,
+    paddingBottom: 62,
   },
-  heroEyebrow: {
-    color: '#DBD2FF',
-    fontSize: 10,
-    letterSpacing: 1.6,
-    fontWeight: '600'
-  },
-  heroTitle: {
-    color: '#FFF',
-    fontSize: 25,
-    fontWeight: '700'
-  },
-  heroBody: {
-    color: '#EEE8FF',
-    lineHeight: 21,
-    fontSize: 14
-  },
-  stats: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  stat: {
-    flex: 1,
-    backgroundColor: '#FFF',
+  heroTop: { flexDirection: "row", alignItems: "center" },
+  heroText: { flex: 1, marginHorizontal: 14 },
+  greeting: { fontSize: 20, fontWeight: "800", color: "#FFFFFF" },
+  heroSub: { fontSize: 13, color: "rgba(255,255,255,0.88)", marginTop: 3 },
+  bell: {
+    width: 44,
+    height: 44,
     borderRadius: 14,
-    padding: 12,
-    gap: 8
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  statValue: {
-    color: COLORS.primary,
-    fontSize: 17,
-    fontWeight: '700'
-  },
-  button: {
-    minHeight: 48,
-    borderRadius: 12,
-    padding: 13,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8
-  },
-  buttonText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-    flexShrink: 1
-  },
-  secondary: {
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#E8DFFC'
-  },
-  danger: {
-    backgroundColor: '#FDECEE'
-  },
-  disabled: {
-    opacity: 0.45
-  },
-  iconButton: {
-    minWidth: 44,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 22,
-    backgroundColor: '#F0ECF8'
-  },
-  empty: {
-    padding: 26,
-    backgroundColor: '#FFF',
-    borderRadius: 18,
-    gap: 14,
-    alignItems: 'center'
-  },
-  emptyIcon: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#F2EDFF',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  error: {
-    padding: 18,
-    gap: 12,
-    borderRadius: 16,
-    backgroundColor: '#FDECEE'
-  },
-  errorText: {
-    color: '#A52737',
-    fontSize: 13,
-    lineHeight: 20
-  },
-  notice: {
-    backgroundColor: '#F0EBFC',
-    padding: 16,
-    borderRadius: 14
-  },
-  search: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#EAE5F3'
-  },
-  searchInput: {
-    flex: 1,
-    minHeight: 48,
-    fontSize: 13,
-    color: '#303030',
-    minWidth: 0
-  },
-  filters: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  chip: {
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#EAE5F3',
-    borderRadius: 20,
-    minHeight: 44,
-    paddingHorizontal: 16,
-    paddingVertical: 11
-  },
-  selected: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary
-  },
-  nav: {
-    borderTopWidth: 1,
-    borderTopColor: '#EFEBF6',
-    paddingTop: 8,
-    flexDirection: 'row',
-    backgroundColor: '#FFF'
-  },
-  navItem: {
-    flex: 1,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5
-  },
-  navLabel: {
-    fontSize: 10,
-    color: '#9296A6'
-  },
-  unreadDot: {
-    position: 'absolute',
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#EF786A',
-    top: 7,
-    right: 10
-  },
-  smallDot: {
+  bellDot: {
+    position: "absolute",
+    top: 9,
+    right: 10,
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: COLORS.primary
+    backgroundColor: "#FFFFFF",
   },
-  unreadCard: {
-    borderWidth: 1,
-    borderColor: '#DCD0FF'
+  onlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 24,
+    paddingHorizontal: 2,
   },
-  info: {
-    gap: 4,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2EFF6'
+  onlineText: { flex: 1, paddingRight: 12 },
+  onlineTitle: { fontSize: 15, fontWeight: "800", color: "#FFFFFF" },
+  onlineSub: { fontSize: 12, color: "rgba(255,255,255,0.85)", marginTop: 3 },
+
+  // Earnings
+  earnings: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 24,
+    marginHorizontal: 20,
+    marginTop: -38,
+    padding: 18,
+    ...SHADOWS.small,
   },
-  activity: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2EFF6'
-  },
-  dateRail: {
-    gap: 8
-  },
-  day: {
-    minWidth: 60,
-    minHeight: 94,
-    borderRadius: 16,
-    padding: 10,
-    gap: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#EAE5F3'
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#EAE5F3',
-    borderRadius: 10,
-    padding: 14,
-    minHeight: 48,
-    backgroundColor: '#FFF',
-    color: '#303030'
-  },
-  infoCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+  earningsTop: { flexDirection: "row", alignItems: "flex-start" },
+  earningsText: { flex: 1 },
+  earningsLabel: { fontSize: 14, color: COLORS.textMuted },
+  earningsValue: {
+    fontSize: 30,
+    fontWeight: "800",
     color: COLORS.textPrimary,
-    marginBottom: 12
-  }
+    marginTop: 2,
+    letterSpacing: -0.5,
+  },
+  trendRow: { flexDirection: "row", alignItems: "center", marginTop: 8, gap: 6 },
+  trendText: { fontSize: 13, fontWeight: "700", color: GREEN },
+  walletTile: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#EEEAFD",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  earningsDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.inputBorder,
+    marginTop: 16,
+    marginBottom: 14,
+  },
+  payoutRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  payoutText: { fontSize: 13, color: COLORS.textPrimary },
+  payoutValue: { fontWeight: "800" },
+  detailLink: { flexDirection: "row", alignItems: "center", gap: 2 },
+  link: { fontSize: 14, fontWeight: "800", color: COLORS.primary },
+
+  // Body
+  body: { paddingHorizontal: 20, paddingTop: 16 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  tile: {
+    flexBasis: "47%",
+    flexGrow: 1,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 22,
+    padding: 16,
+    ...SHADOWS.small,
+  },
+  tileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tileValue: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginTop: 14,
+    letterSpacing: -0.5,
+  },
+  tileLabel: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginTop: 6 },
+  tileSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
+
+  // Schedule
+  sectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 26,
+    marginBottom: 14,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
+  slot: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    ...SHADOWS.small,
+  },
+  slotTime: { width: 44, alignItems: "flex-start" },
+  slotTimeText: { fontSize: 15, fontWeight: "800", color: COLORS.textPrimary },
+  slotPeriod: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  slotDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: "stretch",
+    backgroundColor: COLORS.inputBorder,
+    marginHorizontal: 14,
+  },
+  slotBody: { flex: 1 },
+  slotTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
+  slotTitle: { flex: 1, fontSize: 15, fontWeight: "800", color: COLORS.textPrimary },
+  slotSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  pillDot: { width: 6, height: 6, borderRadius: 3 },
+  pillText: { fontSize: 11, fontWeight: "800" },
 });
 const fieldStyle = {
   borderWidth: 1,

@@ -7,6 +7,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Alert,
   ActivityIndicator,
   Modal,
   KeyboardAvoidingView,
@@ -16,7 +17,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, SHADOWS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
-import { adminService } from "../../services/adminService";
+import adminService from "../../services/adminService";
 
 const ROLE_LABEL = "Platform Administrator";
 const NOTICE_MS = 3000;
@@ -91,7 +92,6 @@ const Field = ({ label, icon, error, right, ...inputProps }) => (
         color={error ? COLORS.error : COLORS.textMuted}
       />
       <TextInput
-        accessibilityLabel={inputProps.accessibilityLabel || label}
         style={styles.input}
         placeholderTextColor={COLORS.disabledText}
         {...inputProps}
@@ -109,14 +109,26 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
   const insets = useSafeAreaInsets();
   const { updateUserSession } = useAuth();
 
-  const [form, setForm] = useState({ name: user?.name || "", email: user?.email || "", phone: user?.phone || "", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "" });
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const lock = useRef(false);
-  const close = () => { if (!lock.current) onClose(); };
+  // Reset the form every time the sheet opens
+  useEffect(() => {
+    if (visible) {
+      setForm({
+        name: user?.name || "",
+        email: user?.email || "",
+        phone: user?.phone || "",
+        password: "",
+      });
+      setErrors({});
+      setServerError("");
+      setShowPassword(false);
+    }
+  }, [visible, user]);
 
   const setField = useCallback((key, value) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -134,7 +146,6 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
   );
 
   const handleSave = async () => {
-    if (lock.current) return;
     const found = validate(form);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -147,7 +158,7 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
     if (form.password) payload.password = form.password;
 
     try {
-      lock.current = true; setSaving(true);
+      setSaving(true);
       const res = await adminService.updateProfile(payload);
       if (res?.user) {
         await updateUserSession(res.user);
@@ -158,17 +169,17 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
     } catch (err) {
       setServerError(getApiError(err, "Failed to update profile."));
     } finally {
-      lock.current = false; setSaving(false);
+      setSaving(false);
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView
         style={styles.sheetRoot}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <Pressable style={styles.backdrop} onPress={close} accessibilityLabel="Close" />
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
 
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
           <View style={styles.handle} />
@@ -181,7 +192,7 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
               <Text style={styles.sheetTitle}>Edit profile</Text>
               <Text style={styles.sheetSubtitle}>Update your administrator details</Text>
             </View>
-            <IconButton icon="close" onPress={close} label="Close" />
+            <IconButton icon="close" onPress={onClose} label="Close" />
           </View>
 
           <ScrollView
@@ -258,13 +269,13 @@ const EditProfileSheet = ({ visible, user, onClose, onSaved }) => {
 
           <View style={styles.sheetFooter}>
             <Pressable
-              onPress={close}
+              onPress={onClose}
               style={({ pressed }) => [styles.footerButton, styles.cancelButton, pressed && styles.pressed]}
             >
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              accessibilityRole="button" onPress={handleSave}
+              onPress={handleSave}
               disabled={saving || !isDirty}
               style={({ pressed }) => [
                 styles.footerButton,
@@ -323,8 +334,7 @@ const AdminProfileScreen = ({ navigation }) => {
   const { user, logout } = useAuth();
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false), [confirmation, setConfirmation] = useState(null), [password, setPassword] = useState(''), [actionError, setActionError] = useState('');
-  const actionLock = useRef(false);
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
   const noticeTimer = useRef(null);
 
@@ -341,17 +351,34 @@ const AdminProfileScreen = ({ navigation }) => {
     showNotice("Profile updated successfully.");
   }, [showNotice]);
 
-  function openConfirmation(kind) { setConfirmation(kind); setPassword(''); setActionError(''); }
-  const confirmLogout = () => openConfirmation('logout');
-  const confirmDelete = () => openConfirmation('delete');
-  const closeConfirmation = () => { if (!actionLock.current) { setConfirmation(null); setPassword(''); setActionError(''); } };
-  async function confirmAction() {
-    if (actionLock.current) return;
-    actionLock.current = true; setDeleting(true); setActionError('');
-    try { if (confirmation === 'delete') await adminService.deleteProfile(password); await logout(); }
-    catch (error) { setActionError(getApiError(error, 'Unable to complete this action. Please try again.')); }
-    finally { actionLock.current = false; setDeleting(false); }
-  }
+  const confirmLogout = () =>
+    Alert.alert("Log out", "Are you sure you want to log out of this account?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: () => logout() },
+    ]);
+
+  const confirmDelete = () =>
+    Alert.alert(
+      "Delete admin account",
+      "This permanently deletes your administrator account and cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setDeleting(true);
+              await adminService.deleteProfile();
+              await logout();
+            } catch (err) {
+              setDeleting(false);
+              Alert.alert("Delete failed", getApiError(err, "Failed to delete account."));
+            }
+          },
+        },
+      ]
+    );
 
   const canGoBack = navigation?.canGoBack?.() ?? false;
 
@@ -455,14 +482,14 @@ const AdminProfileScreen = ({ navigation }) => {
           {/* Actions */}
           <View style={[styles.actionsRow, d.actionsRow]}>
             <Pressable
-              accessibilityRole="button" onPress={() => setSheetOpen(true)}
+              onPress={() => setSheetOpen(true)}
               style={({ pressed }) => [styles.actionButton, styles.primaryButton, d.actionButton, pressed && styles.pressed]}
             >
               <MaterialCommunityIcons name="square-edit-outline" size={icon} color="#FFFFFF" />
               <Text style={[styles.primaryButtonText, d.buttonText]}>Edit profile</Text>
             </Pressable>
             <Pressable
-              accessibilityRole="button" accessibilityLabel="Log out" onPress={confirmLogout}
+              onPress={confirmLogout}
               style={({ pressed }) => [styles.actionButton, styles.secondaryButton, d.actionButton, pressed && styles.pressed]}
             >
               <MaterialCommunityIcons name="logout" size={icon} color={COLORS.textPrimary} />
@@ -494,13 +521,12 @@ const AdminProfileScreen = ({ navigation }) => {
         </ScrollView>
       </View>
 
-      {sheetOpen && <EditProfileSheet
+      <EditProfileSheet
         visible={sheetOpen}
         user={user}
         onClose={() => setSheetOpen(false)}
         onSaved={handleSaved}
-      />}
-      {!!confirmation && <Modal visible transparent animationType="fade" onRequestClose={closeConfirmation}><KeyboardAvoidingView style={styles.sheetRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><Pressable style={styles.backdrop} onPress={closeConfirmation} /><View style={[styles.sheet, { padding: 20, paddingBottom: Math.max(20, insets.bottom) }]}><Text style={styles.sheetTitle}>{confirmation === 'delete' ? 'Delete admin account?' : 'Log out?'}</Text><Text style={styles.subtitle}>{confirmation === 'delete' ? 'This permanently deletes your account. Other accounts remain. The last administrator cannot be deleted.' : 'You can sign in again with your account details.'}</Text>{confirmation === 'delete' && <Field label="Current password" icon="lock-outline" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} maxLength={72} />}{!!actionError && <Text accessibilityRole="alert" style={styles.fieldError}>{actionError}</Text>}<View style={styles.sheetFooter}><Pressable accessibilityRole="button" onPress={closeConfirmation} disabled={deleting} style={[styles.footerButton, styles.cancelButton]}><Text style={styles.cancelText}>Cancel</Text></Pressable><Pressable accessibilityRole="button" disabled={deleting || (confirmation === 'delete' && !password)} onPress={confirmAction} style={[styles.footerButton, styles.saveButton, (deleting || (confirmation === 'delete' && !password)) && styles.saveDisabled]}>{deleting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveText}>{confirmation === 'delete' ? 'Confirm deletion' : 'Confirm log out'}</Text>}</Pressable></View></View></KeyboardAvoidingView></Modal>}
+      />
     </View>
   );
 };
@@ -511,7 +537,6 @@ const styles = StyleSheet.create({
 
   // Header
   header: {
-    width: '100%', maxWidth: 760, alignSelf: 'center',
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: COLORS.secondary,
@@ -537,7 +562,7 @@ const styles = StyleSheet.create({
 
   // Body (fits on one screen)
   body: { flex: 1 },
-  content: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 14, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  content: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 14 },
 
   notice: {
     position: "absolute",
@@ -672,7 +697,6 @@ const styles = StyleSheet.create({
   sheetRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(20,15,45,0.55)" },
   sheet: {
-    width: '100%', maxWidth: 600, alignSelf: 'center',
     backgroundColor: COLORS.secondary,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,

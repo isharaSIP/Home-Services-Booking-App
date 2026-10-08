@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useRef } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Alert,
   ActivityIndicator,
   Modal,
   Image,
@@ -17,7 +18,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, SHADOWS } from "../../constants/theme";
-import { adminService } from "../../services/adminService";
+import adminService from "../../services/adminService";
 
 const FILTERS = [
   { label: "All users", value: "All" },
@@ -65,6 +66,17 @@ const getInitials = (name = "") => {
 // ---------------------------------------------------------------------------
 // Summary tile component
 // ---------------------------------------------------------------------------
+const SummaryTile = ({ label, value }) => (
+  <View style={styles.tile}>
+    <Text style={styles.tileLabel}>{label}</Text>
+    <Text style={styles.tileValue}>{value}</Text>
+    <View style={styles.trendRow}>
+      <MaterialCommunityIcons name="arrow-up" size={13} color={TREND_GREEN} />
+      <Text style={styles.trendText}>Live Data</Text>
+    </View>
+  </View>
+);
+
 // ---------------------------------------------------------------------------
 // Account card component
 // ---------------------------------------------------------------------------
@@ -87,6 +99,7 @@ const AccountCard = ({ item, onPress }) => {
       ? `System Administrator`
       : `Customer · ${item.phone || item.email}`;
 
+  const shortId = `US-${item._id ? item._id.slice(-6).toUpperCase() : "0000"}`;
 
   return (
     <View style={styles.card}>
@@ -140,6 +153,8 @@ const UsersScreen = () => {
   const insets = useSafeAreaInsets();
 
   const [users, setUsers] = useState([]);
+  const [customerCount, setCustomerCount] = useState(0);
+  const [providerCount, setProviderCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const [query, setQuery] = useState("");
@@ -160,17 +175,26 @@ const UsersScreen = () => {
   const [addAdminLoading, setAddAdminLoading] = useState(false);
   const [addAdminError, setAddAdminError] = useState("");
 
-  const [loadError, setLoadError] = useState(''), [notice, setNotice] = useState('');
-  const request = useRef(null), createLock = useRef(false), listRevision = useRef(0);
-  const fetchUsers = useCallback(() => {
-    request.current?.abort(); const controller = new AbortController(); request.current = controller; const revision = listRevision.current;
-    return adminService.getAllUsers(controller.signal).then(data => {
-      if (!controller.signal.aborted && revision === listRevision.current) { setUsers(data.users); setLoadError(''); }
-    }).catch(error => { if (!controller.signal.aborted) setLoadError(error.response?.data?.message || 'Unable to load accounts. Please try again.'); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+  useEffect(() => {
+    fetchUsers();
   }, []);
-  useFocusEffect(useCallback(() => { void fetchUsers(); return () => request.current?.abort(); }, [fetchUsers]));
-  const refresh = () => { setLoading(true); void fetchUsers(); };
-  const closeCreate = () => { if (!createLock.current) { setShowAddAdminModal(false); setAdminPassword(''); setAdminConfirmPassword(''); setShowPassword(false); } };
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const data = await adminService.getAllUsers();
+      if (data && data.users) {
+        setUsers(data.users);
+        setCustomerCount(data.customerCount || 0);
+        setProviderCount(data.providerCount || 0);
+      }
+    } catch (error) {
+      console.error("Error fetching users list:", error);
+      Alert.alert("Error", "Failed to load actual users data from database.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -195,7 +219,6 @@ const UsersScreen = () => {
   }, [users, query, filter]);
 
   const handleCreateAdmin = async () => {
-    if (createLock.current) return;
     setAddAdminError("");
 
     if (!adminName.trim()) {
@@ -206,8 +229,8 @@ const UsersScreen = () => {
       setAddAdminError("Please enter a valid email address");
       return;
     }
-    if (!/^\+?[\d\s-]{7,18}$/.test(adminPhone.trim())) {
-      setAddAdminError("Enter a valid phone number");
+    if (!adminPhone.trim()) {
+      setAddAdminError("Phone Number is required");
       return;
     }
     if (!adminPassword || adminPassword.length < 6) {
@@ -220,17 +243,16 @@ const UsersScreen = () => {
     }
 
     try {
-      createLock.current = true; setAddAdminLoading(true);
+      setAddAdminLoading(true);
       const res = await adminService.createAdmin({
         name: adminName.trim(),
         email: adminEmail.trim(),
         phone: adminPhone.trim(),
-        password: adminPassword, confirmPassword: adminConfirmPassword,
+        password: adminPassword,
       });
 
-      setNotice(res.message || 'Admin account created successfully.');
-      listRevision.current++; setUsers(rows => [{ ...res.admin, _id: res.admin._id || res.admin.id, createdAt: new Date().toISOString() }, ...rows]);
-
+      Alert.alert("Success 🎉", res.message || "New Admin account created successfully!");
+      
       // Reset form
       setAdminName("");
       setAdminEmail("");
@@ -245,7 +267,7 @@ const UsersScreen = () => {
       const msg = error.response?.data?.message || "Failed to create Admin account";
       setAddAdminError(msg);
     } finally {
-      createLock.current = false; setAddAdminLoading(false);
+      setAddAdminLoading(false);
     }
   };
 
@@ -258,7 +280,7 @@ const UsersScreen = () => {
         <View style={styles.headerText}>
           <Text style={styles.screenTitle}>Users & providers</Text>
           <Text style={styles.subtitle}>
-            {loading ? 'Loading accounts…' : loadError && !users.length ? 'Accounts unavailable' : formatNumber(users.length) + ' accounts on the platform'}
+            {formatNumber(users.length)} accounts on the platform
           </Text>
         </View>
 
@@ -266,7 +288,7 @@ const UsersScreen = () => {
           <TouchableOpacity
             style={styles.addAdminBtn}
             onPress={() => {
-              setNotice(""); setShowPassword(false); setAddAdminError("");
+              setAddAdminError("");
               setShowAddAdminModal(true);
             }}
             accessibilityRole="button"
@@ -277,7 +299,7 @@ const UsersScreen = () => {
 
           <TouchableOpacity
             style={styles.menuButton}
-            onPress={refresh}
+            onPress={fetchUsers}
             accessibilityRole="button"
             accessibilityLabel="Refresh list"
           >
@@ -293,8 +315,18 @@ const UsersScreen = () => {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {!!loadError && <View style={styles.errorBanner}><Text accessibilityRole="alert" style={styles.errorText}>{loadError}</Text><TouchableOpacity accessibilityRole="button" onPress={refresh}><Text style={styles.actionText}>Try again</Text></TouchableOpacity></View>}
-        {!!notice && <Text accessibilityRole="alert" style={styles.count}>{notice}</Text>}
+        {/* Summary tiles */}
+        {/* <View style={styles.tiles}>
+          <SummaryTile
+            label="Customers"
+            value={formatNumber(customerCount)}
+          />
+          <SummaryTile
+            label="Providers"
+            value={formatNumber(providerCount)}
+          />
+        </View> */}
+
         {/* Search */}
         <View style={styles.search}>
           <MaterialCommunityIcons name="magnify" size={20} color={COLORS.textMuted} />
@@ -384,7 +416,7 @@ const UsersScreen = () => {
         onRequestClose={() => setSelectedUser(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { paddingBottom: Math.max(24, insets.bottom) }]}>
+          <View style={styles.modalContent}>
             {/* Modal Header */}
             <View style={styles.modalHeader}>
               <View style={styles.modalHeaderTitleRow}>
@@ -566,14 +598,14 @@ const UsersScreen = () => {
         visible={showAddAdminModal}
         transparent={true}
         animationType="slide"
-        onRequestClose={closeCreate}
+        onRequestClose={() => setShowAddAdminModal(false)}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.keyboardAvoidingModalContainer}
         >
           <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { paddingBottom: Math.max(24, insets.bottom) }]}>
+            <View style={styles.modalContent}>
               {/* Modal Header */}
               <View style={styles.modalHeader}>
                 <View style={styles.modalHeaderTitleRow}>
@@ -591,7 +623,7 @@ const UsersScreen = () => {
                 </View>
                 <TouchableOpacity
                   style={styles.closeBtn}
-                  onPress={closeCreate}
+                  onPress={() => setShowAddAdminModal(false)}
                 >
                   <MaterialCommunityIcons name="close" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
@@ -614,7 +646,7 @@ const UsersScreen = () => {
                   <Text style={styles.formLabel}>Full Name *</Text>
                   <TextInput
                     style={styles.formInput}
-                    accessibilityLabel="Admin full name" maxLength={120} placeholder="e.g. Kasun Fernando"
+                    placeholder="e.g. Kasun Fernando"
                     placeholderTextColor={COLORS.disabledText}
                     value={adminName}
                     onChangeText={(text) => {
@@ -629,7 +661,7 @@ const UsersScreen = () => {
                   <Text style={styles.formLabel}>Email Address *</Text>
                   <TextInput
                     style={styles.formInput}
-                    accessibilityLabel="Admin email address" maxLength={254} placeholder="e.g. admin.kasun@fixmate.com"
+                    placeholder="e.g. admin.kasun@fixmate.com"
                     placeholderTextColor={COLORS.disabledText}
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -646,7 +678,7 @@ const UsersScreen = () => {
                   <Text style={styles.formLabel}>Phone Number *</Text>
                   <TextInput
                     style={styles.formInput}
-                    accessibilityLabel="Admin phone number" maxLength={18} placeholder="e.g. 0771234567"
+                    placeholder="e.g. 0771234567"
                     placeholderTextColor={COLORS.disabledText}
                     keyboardType="phone-pad"
                     value={adminPhone}
@@ -663,7 +695,7 @@ const UsersScreen = () => {
                   <View style={styles.passwordInputContainer}>
                     <TextInput
                       style={styles.passwordInputText}
-                      accessibilityLabel="Admin password" maxLength={72} placeholder="At least 6 characters"
+                      placeholder="At least 6 characters"
                       placeholderTextColor={COLORS.disabledText}
                       secureTextEntry={!showPassword}
                       value={adminPassword}
@@ -688,7 +720,7 @@ const UsersScreen = () => {
                   <Text style={styles.formLabel}>Confirm Password *</Text>
                   <TextInput
                     style={styles.formInput}
-                    accessibilityLabel="Confirm admin password" maxLength={72} placeholder="Re-enter password"
+                    placeholder="Re-enter password"
                     placeholderTextColor={COLORS.disabledText}
                     secureTextEntry={!showPassword}
                     value={adminConfirmPassword}
@@ -702,7 +734,7 @@ const UsersScreen = () => {
                 {/* Modal Submit Button Inside ScrollView */}
                 <TouchableOpacity
                   style={styles.createAdminSubmitBtn}
-                  accessibilityRole="button" onPress={handleCreateAdmin}
+                  onPress={handleCreateAdmin}
                   disabled={addAdminLoading}
                 >
                   {addAdminLoading ? (
@@ -1051,7 +1083,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   modalContent: {
-    width: '100%', maxWidth: 600, alignSelf: 'center',
     backgroundColor: COLORS.secondary,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,

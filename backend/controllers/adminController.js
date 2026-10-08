@@ -84,67 +84,172 @@ const verifyProvider = async (req, res) => {
   }
 };
 
-const adminDto = user => ({ id: String(user._id), _id: String(user._id), name: user.name, email: user.email, phone: user.phone, role: user.role, isVerified: user.isVerified, isApprovedByAdmin: user.isApprovedByAdmin });
-const accountInput = (body, passwordRequired = false) => {
-  const { name, email, phone, password } = body || {};
-  if (typeof name !== 'string' || !name.trim() || name.trim().length > 120) throw new Error('Enter a full name of up to 120 characters.');
-  if (typeof email !== 'string' || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email.trim())) throw new Error('Enter a valid email address.');
-  if (typeof phone !== 'string' || !/^\+?[\d\s-]{7,18}$/.test(phone.trim())) throw new Error('Enter a valid phone number.');
-  if ((passwordRequired || password) && (typeof password !== 'string' || password.length < 6 || Buffer.byteLength(password, 'utf8') > 72)) throw new Error('Password must be 6–72 bytes long.');
-  return { name: name.trim(), email: email.trim().toLowerCase(), phone: phone.trim(), ...(password ? { password } : {}) };
-};
-const adminError = (res, error, fallback) => res.status(error.httpStatus || (error.code === 11000 ? 409 : 503)).json({ message: error.httpStatus ? error.message : error.code === 11000 ? 'An account with this email or phone number already exists.' : fallback });
-
+/**
+ * @desc    Get list of all registered users (Customers, Providers, Admins) with platform metrics
+ * @route   GET /api/admin/users
+ * @access  Private (Admin only)
+ */
 const getAllUsers = async (req, res) => {
   try {
-    // User management needs account fields, never passwords or reset codes.
-    const users = await User.find({}).select('name email phone role isVerified isApprovedByAdmin createdAt providerDetails.category providerDetails.experience providerDetails.qualifications providerDetails.approvalStatus providerDetails.rejectionReason providerDetails.nicFront providerDetails.nicBack providerDetails.certificates').sort({ createdAt: -1 }).lean();
-    res.json({ total: users.length, customerCount: users.filter(u => u.role === 'customer').length, providerCount: users.filter(u => u.role === 'provider').length, adminCount: users.filter(u => u.role === 'admin').length, users });
-  } catch (error) { adminError(res, error, 'Unable to load accounts. Please try again.'); }
+    const users = await User.find({}).select("-password").sort({ createdAt: -1 });
+
+    const customerCount = users.filter((u) => u.role === "customer").length;
+    const providerCount = users.filter((u) => u.role === "provider").length;
+
+    return res.status(200).json({
+      total: users.length,
+      customerCount,
+      providerCount,
+      users,
+    });
+  } catch (error) {
+    console.error("Get All Users Error:", error);
+    return res.status(500).json({ message: "Server error fetching user list" });
+  }
 };
 
+/**
+ * @desc    Create a new Admin account (Admin only)
+ * @route   POST /api/admin/create-admin
+ * @access  Private (Admin only)
+ */
 const createAdmin = async (req, res) => {
-  let input;
-  try { input = accountInput(req.body, true); if (req.body.confirmPassword !== input.password) throw new Error('Passwords do not match.'); }
-  catch (error) { return res.status(400).json({ message: error.message }); }
   try {
-    const duplicate = await User.exists({ $or: [{ email: input.email }, { phone: input.phone }] });
-    if (duplicate) return res.status(409).json({ message: 'An account with this email or phone number already exists.' });
-    // The model's existing save hook hashes the password.
-    const admin = await User.create({ ...input, role: 'admin', isVerified: true, isApprovedByAdmin: true });
-    res.status(201).json({ message: 'Admin account created successfully.', admin: adminDto(admin) });
-  } catch (error) { adminError(res, error, 'Unable to create the administrator. Please try again.'); }
+    const { name, email, phone, password } = req.body;
+
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({ message: "Name, email, phone, and password are required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters long" });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPhone = phone.trim();
+
+    const emailExists = await User.findOne({ email: cleanEmail });
+    if (emailExists) {
+      return res.status(400).json({ message: "An account with this email already exists" });
+    }
+
+    const phoneExists = await User.findOne({ phone: cleanPhone });
+    if (phoneExists) {
+      return res.status(400).json({ message: "An account with this phone number already exists" });
+    }
+
+    const newAdmin = await User.create({
+      name: name.trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
+      password,
+      role: "admin",
+      isVerified: true,
+      isApprovedByAdmin: true,
+    });
+
+    console.log("==========================================");
+    console.log("🛡️ NEW ADMIN ACCOUNT CREATED BY SYSTEM ADMIN");
+    console.log(`👤 Name: ${newAdmin.name}`);
+    console.log(`📧 Email: ${newAdmin.email}`);
+    console.log("==========================================");
+
+    return res.status(201).json({
+      message: "Admin account created successfully",
+      admin: {
+        id: newAdmin._id,
+        name: newAdmin.name,
+        email: newAdmin.email,
+        phone: newAdmin.phone,
+        role: newAdmin.role,
+      },
+    });
+  } catch (error) {
+    console.error("Create Admin Error:", error);
+    return res.status(500).json({ message: "Server error creating admin account" });
+  }
 };
 
+/**
+ * @desc    Update current Admin profile details
+ * @route   PUT /api/admin/profile
+ * @access  Private (Admin only)
+ */
 const updateAdminProfile = async (req, res) => {
-  let input;
-  try { input = accountInput(req.body); }
-  catch (error) { return res.status(400).json({ message: error.message }); }
   try {
-    const user = await User.findOne({ _id: req.user._id, role: 'admin' });
-    if (!user) return res.status(404).json({ message: 'Admin account not found.' });
-    const duplicate = await User.exists({ _id: { $ne: user._id }, $or: [{ email: input.email }, { phone: input.phone }] });
-    if (duplicate) return res.status(409).json({ message: 'An account with this email or phone number already exists.' });
-    Object.assign(user, input); await user.save();
-    res.json({ message: 'Admin profile updated successfully.', user: adminDto(user) });
-  } catch (error) { adminError(res, error, 'Unable to update your profile. Please try again.'); }
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ message: "Admin account not found" });
+    }
+
+    const { name, email, phone, password } = req.body;
+
+    if (name) user.name = name.trim();
+
+    if (email && email.toLowerCase().trim() !== user.email) {
+      const emailExists = await User.findOne({ email: email.toLowerCase().trim() });
+      if (emailExists) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+      user.email = email.toLowerCase().trim();
+    }
+
+    if (phone && phone.trim() !== user.phone) {
+      const phoneExists = await User.findOne({ phone: phone.trim() });
+      if (phoneExists) {
+        return res.status(400).json({ message: "An account with this phone number already exists" });
+      }
+      user.phone = phone.trim();
+    }
+
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ message: "New password must be at least 6 characters" });
+      }
+      user.password = password;
+    }
+
+    const updatedUser = await user.save();
+
+    return res.status(200).json({
+      message: "Admin profile updated successfully",
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+        role: updatedUser.role,
+        isVerified: updatedUser.isVerified,
+      },
+    });
+  } catch (error) {
+    console.error("Update Admin Profile Error:", error);
+    return res.status(500).json({ message: "Server error updating profile" });
+  }
 };
 
+/**
+ * @desc    Delete current Admin account
+ * @route   DELETE /api/admin/profile
+ * @access  Private (Admin only)
+ */
 const deleteAdminProfile = async (req, res) => {
   try {
-    const user = await User.findOne({ _id: req.user._id, role: 'admin' });
-    if (!user) return res.status(404).json({ message: 'Admin account not found.' });
-    if (typeof req.body?.password !== 'string' || !(await user.matchPassword(req.body.password))) return res.status(400).json({ message: 'Enter your current password to confirm deletion.' });
-    await User.db.transaction(async session => {
-      const admins = await User.find({ role: 'admin' }).select('_id').sort({ _id: 1 }).session(session).lean();
-      if (admins.length <= 1) throw Object.assign(new Error('The last administrator cannot be deleted. Create another admin account first.'), { httpStatus: 409 });
-      // Both concurrent deletions write the same administrator rows and retry.
-      await User.updateMany({ role: 'admin', _id: { $in: admins.map(a => a._id) } }, { $inc: { __v: 1 } }, { session });
-      const deleted = await User.deleteOne({ _id: user._id, role: 'admin' }, { session });
-      if (!deleted.deletedCount) throw Object.assign(new Error('Admin account no longer exists.'), { httpStatus: 404 });
-    });
-    res.json({ message: 'Admin account deleted successfully.' });
-  } catch (error) { adminError(res, error, 'Unable to delete your account. Please try again.'); }
+    const user = await User.findByIdAndDelete(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "Admin account not found" });
+    }
+
+    console.log("==========================================");
+    console.log(`⚠️ ADMIN ACCOUNT DELETED: ${user.email}`);
+    console.log("==========================================");
+
+    return res.status(200).json({ message: "Admin account deleted successfully" });
+  } catch (error) {
+    console.error("Delete Admin Profile Error:", error);
+    return res.status(500).json({ message: "Server error deleting account" });
+  }
 };
 
 module.exports = {
@@ -154,5 +259,4 @@ module.exports = {
   createAdmin,
   updateAdminProfile,
   deleteAdminProfile,
-  accountInput,
 };

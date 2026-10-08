@@ -1,6 +1,13 @@
 const express = require("express");
 const router = express.Router();
-const { getProviders, verifyProvider, getAllUsers, createAdmin, updateAdminProfile, deleteAdminProfile } = require("../controllers/adminController");
+const {
+  getProviders,
+  verifyProvider,
+  getAllUsers,
+  createAdmin,
+  updateAdminProfile,
+  deleteAdminProfile,
+} = require("../controllers/adminController");
 const { protect } = require("../middleware/authMiddleware");
 const { authorizeRoles } = require("../middleware/roleMiddleware");
 
@@ -10,9 +17,9 @@ router.use(authorizeRoles("admin"));
 
 router.get("/providers", getProviders);
 router.put("/verify-provider/:id", verifyProvider);
-router.get('/users', getAllUsers);
-router.post('/create-admin', createAdmin);
-router.put('/profile', updateAdminProfile);
-router.delete('/profile', deleteAdminProfile);
+router.get("/users", getAllUsers);
+router.post("/create-admin", createAdmin);
+router.put("/profile", updateAdminProfile);
+router.delete("/profile", deleteAdminProfile);
 
 module.exports = router;

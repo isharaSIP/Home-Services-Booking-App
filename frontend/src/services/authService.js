@@ -55,6 +55,12 @@ export const authService = {
     return response.data;
   },
 
+  // Update user location in database
+  updateLocation: async (locationData) => {
+    const response = await api.put("/auth/location", locationData);
+    return response.data;
+  },
+
   // Helper to store session tokens securely
   saveSession: async (token, user) => {
     if (token) await setSecureItem("userToken", token);

@@ -40,9 +40,10 @@ export const AuthProvider = ({ children }) => {
         await authService.saveSession(data.token, data.user);
         setToken(data.token);
         setUser(data.user);
+        await authService.saveSession(data.token, data.user);
         return { success: true, user: data.user, role: data.user.role };
       }
-      return { success: false, requiresAdminApproval: data.requiresAdminApproval, approvalStatus: data.approvalStatus, message: data.message || "Login failed" };
+      return { success: false, message: data.message || "Login failed" };
     } catch (error) {
       const msg = error.response?.data?.message || "Invalid credentials or connection error";
       const isUnverified = error.response?.data?.requiresVerification;
@@ -75,9 +76,16 @@ export const AuthProvider = ({ children }) => {
         await authService.saveSession(data.token, data.user);
         setToken(data.token);
         setUser(data.user);
-        return { success: true, user: data.user, role: data.user.role };
+        await authService.saveSession(data.token, data.user);
+        return { success: true, user: data.user, role: data.user.role, message: data.message };
       }
-      return { success: true, requiresAdminApproval: data.requiresAdminApproval, message: data.message };
+      return {
+        success: true,
+        message: data.message,
+        requiresAdminApproval: data.requiresAdminApproval,
+        user: data.user,
+        role: data.user?.role,
+      };
     } catch (error) {
       const msg = error.response?.data?.message || "OTP verification failed";
       return { success: false, message: msg };
@@ -124,10 +132,28 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const updateUserLocation = async (locationData) => {
+    try {
+      const res = await authService.updateLocation(locationData);
+      if (res && res.user) {
+        setUser(res.user);
+        if (token) {
+          await authService.saveSession(token, res.user);
+        }
+        return { success: true, user: res.user };
+      }
+      return { success: false, message: "Failed to update location" };
+    } catch (error) {
+      const msg = error.response?.data?.message || "Error updating location";
+      return { success: false, message: msg };
+    }
+  };
+
   const updateUserSession = async (updatedUser) => {
-    const nextUser = { ...user, ...updatedUser };
-    await authService.saveSession(token, nextUser);
-    setUser(nextUser);
+    setUser(updatedUser);
+    if (token) {
+      await authService.saveSession(token, updatedUser);
+    }
   };
 
   const logout = async () => {
@@ -152,6 +178,7 @@ export const AuthProvider = ({ children }) => {
         verifyResetOTP,
         resetPassword,
         updateUserSession,
+        updateUserLocation,
         logout,
         checkAuthState,
       }}

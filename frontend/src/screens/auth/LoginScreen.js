@@ -64,6 +64,7 @@ const LoginScreen = ({ navigation }) => {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Header & Logo */}
           <View style={styles.headerContainer}>
