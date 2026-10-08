@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { bookingService, bookingWhen } from '../../services/bookingService';
 import { COLORS } from '../../constants/theme';
 export default function MessagesScreen({
-  embedded = false, bookingId, openRequest
+  embedded = false, route, bookingId = route?.params?.bookingId, openRequest = route?.params?.openRequest
 }) {
   const {
       user
