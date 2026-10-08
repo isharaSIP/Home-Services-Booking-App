@@ -9,20 +9,21 @@ export const ProviderDataProvider = ({ children }) => {
   const [online, setOnlineValue] = useState(user?.providerDetails?.acceptingRequests !== false);
   const [bookings, setBookings] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const request = useRef(null), lock = useRef(false);
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
+    if (lock.current) return;
     request.current?.abort(); const c = new AbortController(); request.current = c;
-    setLoading(true); setError('');
+    if (!quiet) { setLoading(true); setError(''); }
     try { const rows = await bookingService.list(c.signal); if (!c.signal.aborted) setBookings(rows); }
     catch (e) { if (!c.signal.aborted) setError(e.response?.data?.message || 'Unable to load jobs. Check your connection and retry.'); }
     finally { if (!c.signal.aborted) setLoading(false); }
   }, []);
   // Initial network load shares the same loading/retry state as manual refresh.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(); const timer = setInterval(load, 30000); return () => { clearInterval(timer); request.current?.abort(); }; }, [load]);
+  useEffect(() => { void load(); const timer = setInterval(() => load(true), 30000); return () => { clearInterval(timer); request.current?.abort(); }; }, [load]);
   const onUpdate = useCallback(updated => { request.current?.abort(); setLoading(false); setBookings(rows => rows.map(b => b.id === updated.id ? updated : b)); }, []);
   const update = useCallback(async (id, values) => {
     if (lock.current) return null; lock.current = true; setBusy(true); setError('');
-    try { const updated = await bookingService.update(id, { ...values, bookingVersion: bookings.find(b => b.id === id)?.version }); onUpdate(updated); return updated; }
+    try { const updated = await bookingService.update(id, { ...values, bookingVersion: values.bookingVersion ?? bookings.find(b => b.id === id)?.version }); onUpdate(updated); return updated; }
     catch (e) { setError(e.response?.data?.message || 'Job was not updated. Your details are kept; retry after checking your connection.'); return null; }
     finally { lock.current = false; setBusy(false); }
   }, [onUpdate, bookings]);
