@@ -83,7 +83,7 @@ const ProviderDashboard = ({ navigation }) => {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
-  const { online, setOnline, pendingCount, urgentCount } = useProviderData();
+  const { online, setOnline, pendingCount, urgentCount, busy, error } = useProviderData();
 
   const name = user?.name || "Service Provider";
   const firstName = name.trim().split(/\s+/)[0];
@@ -137,6 +137,7 @@ const ProviderDashboard = ({ navigation }) => {
             </View>
             <Switch
               value={online}
+              disabled={busy}
               onValueChange={setOnline}
               trackColor={{ false: "rgba(255,255,255,0.35)", true: "#FFFFFF" }}
               thumbColor={online ? COLORS.primary : "#FFFFFF"}
@@ -146,6 +147,7 @@ const ProviderDashboard = ({ navigation }) => {
           </View>
         </View>
 
+        {!!error && <Text accessibilityRole="alert" style={{ color: "#B52636", padding: 20 }}>{error}</Text>}
         {/* Earnings card (overlaps hero) */}
         <View style={styles.earnings}>
           <View style={styles.earningsTop}>
@@ -221,7 +223,7 @@ const ProviderDashboard = ({ navigation }) => {
 
           {/* Today's schedule */}
           <View style={styles.sectionRow}>
-            <Text style={styles.sectionTitle}>Today's schedule</Text>
+            <Text style={styles.sectionTitle}>Today&#39;s schedule</Text>
             <Pressable
               onPress={() => navigation.navigate("Calendar")}
               style={styles.detailLink}
