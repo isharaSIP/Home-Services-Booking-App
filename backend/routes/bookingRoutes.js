@@ -11,9 +11,12 @@ router.get('/alternatives/:providerId', authorizeRoles('customer'), controller.a
 router.get('/availability/:providerId', authorizeRoles('customer', 'provider'), controller.availability);
 router.post('/slots', authorizeRoles('provider'), controller.publishSlot);
 router.delete('/slots', authorizeRoles('provider'), controller.removeSlot);
+router.delete('/slots/day', authorizeRoles('provider'), controller.removeDay);
 router.get('/notifications', authorizeRoles('provider'), controller.notifications);
 router.patch('/:id/notifications/:eventId/read', authorizeRoles('provider'), controller.readNotification);
 router.get('/', authorizeRoles('customer', 'provider'), controller.list);
+router.get('/:id/messages', authorizeRoles('customer', 'provider'), controller.messages);
+router.post('/:id/messages', authorizeRoles('customer', 'provider'), controller.sendMessage);
 router.post('/', authorizeRoles('customer'), controller.create);
 router.patch('/:id', authorizeRoles('customer', 'provider'), controller.update);
 module.exports = router;

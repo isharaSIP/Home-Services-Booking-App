@@ -1,6 +1,9 @@
 import api from './api';
 
 export const bookingService = {
+  removeDay: async date => (await api.delete('/bookings/slots/day', { data: { date } })).data,
+  messages: async (id, signal) => (await api.get(`/bookings/${id}/messages`, { signal })).data.messages,
+  sendMessage: async (id, text, requestId) => (await api.post(`/bookings/${id}/messages`, { text, requestId })).data.messages,
   notifications: async signal => (await api.get('/bookings/notifications', { signal })).data.notifications,
   readNotification: async (id, eventId) => api.patch('/bookings/' + id + '/notifications/' + eventId + '/read'),
   removeSlot: async startsAt => (await api.delete('/bookings/slots', { data: { startsAt } })).data,

@@ -20,8 +20,7 @@ const TAB_ICONS = {
   Profile: require('../../assets/images/booking/nav-imgSvg4.svg'),
 };
 
-// Placeholder until unread messages come from the backend.
-const UNREAD_MESSAGES = 2;
+
 
 // [route name, label, outline icon, filled icon, screen]
 const TABS = [
@@ -53,10 +52,10 @@ const CustomerNavigator = () => {
           component={component}
           options={{
             tabBarLabel: label,
-            tabBarBadge: name === "Messages" && UNREAD_MESSAGES > 0 ? UNREAD_MESSAGES : undefined,
+
             tabBarBadgeStyle: styles.badge,
             tabBarIcon: ({ color }) => (
-              <Image source={TAB_ICONS[name]} tintColor={color} style={{ width: 22, height: 22 }} contentFit="contain" />
+              <Image accessible={false} source={TAB_ICONS[name]} tintColor={color} style={{ width: 22, height: 22 }} contentFit="contain" />
             ),
           }}
         />

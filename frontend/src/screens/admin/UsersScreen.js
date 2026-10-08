@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -7,101 +7,52 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  Alert,
+  ActivityIndicator,
+  Modal,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, SHADOWS } from "../../constants/theme";
-
-// ---------------------------------------------------------------------------
-// Placeholder data. Replace with a call to adminService once the backend
-// exposes the users endpoint.
-// ---------------------------------------------------------------------------
-const TOTALS = {
-  customers: 12480,
-  customersGrowth: 4.2,
-  providers: 1946,
-  providersGrowth: 2.8,
-};
-
-const ACCOUNTS = [
-  {
-    id: "US-10482",
-    name: "Nadeesha Wijesinghe",
-    email: "nadeesha.w@example.com",
-    type: "Customer",
-    location: "Nugegoda",
-    joined: "2024-03",
-    bookings: 24,
-    complaints: 0,
-    rating: null,
-    status: "Active",
-  },
-  {
-    id: "US-10471",
-    name: "Arjun Perera",
-    email: "arjun.perera@example.com",
-    type: "Provider",
-    category: "Plumbing",
-    location: "Nugegoda",
-    joined: "2023-01",
-    bookings: 412,
-    complaints: 1,
-    rating: 4.8,
-    status: "Active",
-  },
-  {
-    id: "US-10466",
-    name: "Imesh Gunawardena",
-    email: "imesh.g@example.com",
-    type: "Customer",
-    location: "Kandy",
-    joined: "2025-07",
-    bookings: 9,
-    complaints: 2,
-    rating: null,
-    status: "Suspended",
-  },
-  {
-    id: "US-10459",
-    name: "Sanduni Rathnayake",
-    email: "sanduni.r@example.com",
-    type: "Provider",
-    category: "Cleaning",
-    location: "Galle",
-    joined: "2022-11",
-    bookings: 268,
-    complaints: 0,
-    rating: 4.9,
-    status: "Active",
-  },
-];
+import { adminService } from "../../services/adminService";
 
 const FILTERS = [
-  { label: "All accounts", value: "All" },
+  { label: "All users", value: "All" },
   { label: "Customers", value: "Customer" },
   { label: "Providers", value: "Provider" },
+  { label: "Admins", value: "Admin" },
 ];
 
 const STATUS_STYLES = {
   Active: { bg: "#DDF5EA", text: "#0F8A5F" },
+  Verified: { bg: "#DDF5EA", text: "#0F8A5F" },
+  Unverified: { bg: "#FEF3DC", text: "#B25E09" },
+  Pending: { bg: "#FEF3DC", text: "#B25E09" },
   Suspended: { bg: "#FDE8E8", text: "#C93B4B" },
 };
 
 const TYPE_STYLES = {
   Customer: { bg: "#E0ECFF", text: "#3B6FE0" },
   Provider: { bg: "#EDE9FE", text: COLORS.primary },
+  Admin: { bg: "#FEE2E2", text: COLORS.error },
 };
 
 const TREND_GREEN = "#0F8A5F";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const formatJoined = (ym) => {
-  const [y, m] = ym.split("-").map(Number);
-  return `${MONTHS[m - 1]} ${y}`;
+const formatJoined = (iso) => {
+  if (!iso) return "N/A";
+
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 };
 
-const formatNumber = (n) => n.toLocaleString("en-US");
+const formatNumber = (n = 0) => n.toLocaleString("en-US");
 
 const getInitials = (name = "") => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -112,29 +63,30 @@ const getInitials = (name = "") => {
 };
 
 // ---------------------------------------------------------------------------
-// Summary tile
+// Summary tile component
 // ---------------------------------------------------------------------------
-const SummaryTile = ({ label, value, growth }) => (
-  <View style={styles.tile}>
-    <Text style={styles.tileLabel}>{label}</Text>
-    <Text style={styles.tileValue}>{value}</Text>
-    <View style={styles.trendRow}>
-      <MaterialCommunityIcons name="arrow-up" size={13} color={TREND_GREEN} />
-      <Text style={styles.trendText}>{growth}%</Text>
-    </View>
-  </View>
-);
-
 // ---------------------------------------------------------------------------
-// Account card
+// Account card component
 // ---------------------------------------------------------------------------
 const AccountCard = ({ item, onPress }) => {
-  const typeTone = TYPE_STYLES[item.type];
-  const status = STATUS_STYLES[item.status] || STATUS_STYLES.Active;
+  const roleType =
+    item.role === "provider"
+      ? "Provider"
+      : item.role === "admin"
+      ? "Admin"
+      : "Customer";
+
+  const typeTone = TYPE_STYLES[roleType] || TYPE_STYLES.Customer;
+  const statusKey = item.isVerified ? "Active" : "Unverified";
+  const status = STATUS_STYLES[statusKey];
+
   const subtitle =
-    item.type === "Provider"
-      ? `Provider · ${item.category} · ${item.location}`
-      : `Customer · ${item.location}`;
+    roleType === "Provider"
+      ? `Provider · ${item.providerDetails?.category || "General Repairs"}`
+      : roleType === "Admin"
+      ? `System Administrator`
+      : `Customer · ${item.phone || item.email}`;
+
 
   return (
     <View style={styles.card}>
@@ -149,25 +101,22 @@ const AccountCard = ({ item, onPress }) => {
           <Text style={styles.subtitleText}>{subtitle}</Text>
         </View>
         <View style={[styles.badge, { backgroundColor: status.bg }]}>
-          <Text style={[styles.badgeText, { color: status.text }]}>{item.status}</Text>
+          <Text style={[styles.badgeText, { color: status.text }]}>{statusKey}</Text>
         </View>
       </View>
 
-      <Text style={styles.idLine}>
-        {item.id} · joined {formatJoined(item.joined)}
-      </Text>
+      {/* <Text style={styles.idLine}>
+        joined {formatJoined(item.createdAt)}
+      </Text> */}
 
       <View style={styles.divider} />
 
       <View style={styles.statsRow}>
         <Text style={[styles.statText, styles.statLeft]}>
-          {item.bookings} {item.bookings === 1 ? "booking" : "bookings"}
-        </Text>
-        <Text style={[styles.statText, styles.statCenter]}>
-          {item.complaints} {item.complaints === 1 ? "complaint" : "complaints"}
+          ✉️ {item.email}
         </Text>
         <Text style={[styles.statText, styles.statRight]}>
-          ★ {item.rating != null ? item.rating.toFixed(1) : "—"}
+          📞 {item.phone}
         </Text>
       </View>
 
@@ -185,31 +134,119 @@ const AccountCard = ({ item, onPress }) => {
 };
 
 // ---------------------------------------------------------------------------
-// Screen
+// Main UsersScreen Component
 // ---------------------------------------------------------------------------
 const UsersScreen = () => {
   const insets = useSafeAreaInsets();
+
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
 
-  const totalAccounts = TOTALS.customers + TOTALS.providers;
+  // Popup View Account Modal State
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+
+  // Add Admin Modal State
+  const [showAddAdminModal, setShowAddAdminModal] = useState(false);
+  const [adminName, setAdminName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPhone, setAdminPhone] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [addAdminLoading, setAddAdminLoading] = useState(false);
+  const [addAdminError, setAddAdminError] = useState("");
+
+  const [loadError, setLoadError] = useState(''), [notice, setNotice] = useState('');
+  const request = useRef(null), createLock = useRef(false), listRevision = useRef(0);
+  const fetchUsers = useCallback(() => {
+    request.current?.abort(); const controller = new AbortController(); request.current = controller; const revision = listRevision.current;
+    return adminService.getAllUsers(controller.signal).then(data => {
+      if (!controller.signal.aborted && revision === listRevision.current) { setUsers(data.users); setLoadError(''); }
+    }).catch(error => { if (!controller.signal.aborted) setLoadError(error.response?.data?.message || 'Unable to load accounts. Please try again.'); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+  }, []);
+  useFocusEffect(useCallback(() => { void fetchUsers(); return () => request.current?.abort(); }, [fetchUsers]));
+  const refresh = () => { setLoading(true); void fetchUsers(); };
+  const closeCreate = () => { if (!createLock.current) { setShowAddAdminModal(false); setAdminPassword(''); setAdminConfirmPassword(''); setShowPassword(false); } };
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return ACCOUNTS.filter((a) => {
-      const matchesFilter = filter === "All" || a.type === filter;
+    return users.filter((u) => {
+      const roleType =
+        u.role === "provider"
+          ? "Provider"
+          : u.role === "admin"
+          ? "Admin"
+          : "Customer";
+
+      const matchesFilter = filter === "All" || roleType === filter;
       const matchesQuery =
         !q ||
-        a.name.toLowerCase().includes(q) ||
-        a.email.toLowerCase().includes(q) ||
-        a.id.toLowerCase().includes(q);
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.toLowerCase().includes(q)) ||
+        (u._id && u._id.toLowerCase().includes(q));
+
       return matchesFilter && matchesQuery;
     });
-  }, [query, filter]);
+  }, [users, query, filter]);
 
-  const openAccount = (item) => {
-    // TODO: navigate to the account details screen once it exists.
-    Alert.alert(item.id, `Details for ${item.name} are coming soon.`);
+  const handleCreateAdmin = async () => {
+    if (createLock.current) return;
+    setAddAdminError("");
+
+    if (!adminName.trim()) {
+      setAddAdminError("Full Name is required");
+      return;
+    }
+    if (!adminEmail.trim() || !/\S+@\S+\.\S+/.test(adminEmail)) {
+      setAddAdminError("Please enter a valid email address");
+      return;
+    }
+    if (!/^\+?[\d\s-]{7,18}$/.test(adminPhone.trim())) {
+      setAddAdminError("Enter a valid phone number");
+      return;
+    }
+    if (!adminPassword || adminPassword.length < 6) {
+      setAddAdminError("Password must be at least 6 characters long");
+      return;
+    }
+    if (adminPassword !== adminConfirmPassword) {
+      setAddAdminError("Passwords do not match");
+      return;
+    }
+
+    try {
+      createLock.current = true; setAddAdminLoading(true);
+      const res = await adminService.createAdmin({
+        name: adminName.trim(),
+        email: adminEmail.trim(),
+        phone: adminPhone.trim(),
+        password: adminPassword, confirmPassword: adminConfirmPassword,
+      });
+
+      setNotice(res.message || 'Admin account created successfully.');
+      listRevision.current++; setUsers(rows => [{ ...res.admin, _id: res.admin._id || res.admin.id, createdAt: new Date().toISOString() }, ...rows]);
+
+      // Reset form
+      setAdminName("");
+      setAdminEmail("");
+      setAdminPhone("");
+      setAdminPassword("");
+      setAdminConfirmPassword("");
+      setShowAddAdminModal(false);
+
+      // Refresh list
+      fetchUsers();
+    } catch (error) {
+      const msg = error.response?.data?.message || "Failed to create Admin account";
+      setAddAdminError(msg);
+    } finally {
+      createLock.current = false; setAddAdminLoading(false);
+    }
   };
 
   return (
@@ -221,17 +258,32 @@ const UsersScreen = () => {
         <View style={styles.headerText}>
           <Text style={styles.screenTitle}>Users & providers</Text>
           <Text style={styles.subtitle}>
-            {formatNumber(totalAccounts)} accounts on the platform
+            {loading ? 'Loading accounts…' : loadError && !users.length ? 'Accounts unavailable' : formatNumber(users.length) + ' accounts on the platform'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.menuButton}
-          onPress={() => Alert.alert("More options", "Coming soon.")}
-          accessibilityRole="button"
-          accessibilityLabel="More options"
-        >
-          <MaterialCommunityIcons name="dots-horizontal" size={22} color={COLORS.textPrimary} />
-        </TouchableOpacity>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.addAdminBtn}
+            onPress={() => {
+              setNotice(""); setShowPassword(false); setAddAdminError("");
+              setShowAddAdminModal(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Add new Admin"
+          >
+            <Text style={styles.addAdminBtnText}>+ Admin</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={refresh}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh list"
+          >
+            <MaterialCommunityIcons name="refresh" size={22} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Everything below scrolls */}
@@ -241,20 +293,8 @@ const UsersScreen = () => {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Summary tiles */}
-        <View style={styles.tiles}>
-          <SummaryTile
-            label="Customers"
-            value={formatNumber(TOTALS.customers)}
-            growth={TOTALS.customersGrowth}
-          />
-          <SummaryTile
-            label="Providers"
-            value={formatNumber(TOTALS.providers)}
-            growth={TOTALS.providersGrowth}
-          />
-        </View>
-
+        {!!loadError && <View style={styles.errorBanner}><Text accessibilityRole="alert" style={styles.errorText}>{loadError}</Text><TouchableOpacity accessibilityRole="button" onPress={refresh}><Text style={styles.actionText}>Try again</Text></TouchableOpacity></View>}
+        {!!notice && <Text accessibilityRole="alert" style={styles.count}>{notice}</Text>}
         {/* Search */}
         <View style={styles.search}>
           <MaterialCommunityIcons name="magnify" size={20} color={COLORS.textMuted} />
@@ -262,7 +302,7 @@ const UsersScreen = () => {
             style={styles.searchInput}
             value={query}
             onChangeText={setQuery}
-            placeholder="Search name, email or account ID"
+            placeholder="Search name, email or phone"
             placeholderTextColor={COLORS.disabledText}
             returnKeyType="search"
             autoCorrect={false}
@@ -293,21 +333,18 @@ const UsersScreen = () => {
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                  <Text
+                    style={[styles.chipText, active && styles.chipTextActive]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                  >
                     {f.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-          <TouchableOpacity
-            style={styles.filterButton}
-            onPress={() => Alert.alert("Filters", "More filters are coming soon.")}
-            accessibilityRole="button"
-            accessibilityLabel="More filters"
-          >
-            <MaterialCommunityIcons name="filter-variant" size={20} color={COLORS.textPrimary} />
-          </TouchableOpacity>
         </View>
 
         {/* Result count */}
@@ -316,8 +353,19 @@ const UsersScreen = () => {
         </Text>
 
         {/* List */}
-        {results.length > 0 ? (
-          results.map((item) => <AccountCard key={item.id} item={item} onPress={openAccount} />)
+        {loading ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.loadingText}>Fetching database accounts...</Text>
+          </View>
+        ) : results.length > 0 ? (
+          results.map((item) => (
+            <AccountCard
+              key={item._id}
+              item={item}
+              onPress={(userObj) => setSelectedUser(userObj)}
+            />
+          ))
         ) : (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>No accounts found</Text>
@@ -325,11 +373,385 @@ const UsersScreen = () => {
           </View>
         )}
       </ScrollView>
+
+      {/* --------------------------------------------------------------------------- */}
+      {/* 1. VIEW ACCOUNT DETAILS POPUP MODAL                                         */}
+      {/* --------------------------------------------------------------------------- */}
+      <Modal
+        visible={!!selectedUser}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setSelectedUser(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(24, insets.bottom) }]}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <View
+                  style={[
+                    styles.modalAvatar,
+                    {
+                      backgroundColor:
+                        selectedUser?.role === "provider"
+                          ? "#EDE9FE"
+                          : selectedUser?.role === "admin"
+                          ? "#FEE2E2"
+                          : "#E0ECFF",
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modalAvatarText,
+                      {
+                        color:
+                          selectedUser?.role === "provider"
+                            ? COLORS.primary
+                            : selectedUser?.role === "admin"
+                            ? COLORS.error
+                            : "#3B6FE0",
+                      },
+                    ]}
+                  >
+                    {getInitials(selectedUser?.name || "")}
+                  </Text>
+                </View>
+                <View style={styles.modalHeaderTextGroup}>
+                  <Text style={styles.modalTitle}>{selectedUser?.name}</Text>
+                  <Text style={styles.modalSubtitle}>
+                    {selectedUser?.role?.toUpperCase()} ACCOUNT
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setSelectedUser(null)}
+              >
+                <MaterialCommunityIcons name="close" size={24} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+              {/* Profile & Database Information */}
+              <View style={styles.infoSection}>
+                <Text style={styles.infoSectionTitle}>Account Overview</Text>
+                <View style={styles.infoRow}>
+                  {/* <Text style={styles.infoLabel}>Database ID:</Text>
+                  <Text style={styles.infoValue}>{selectedUser?._id}</Text> */}
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Email Address:</Text>
+                  <Text style={styles.infoValue}>{selectedUser?.email}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Phone Number:</Text>
+                  <Text style={styles.infoValue}>{selectedUser?.phone}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Account Role:</Text>
+                  <Text style={styles.infoValue}>
+                    {selectedUser?.role?.toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>OTP Verification:</Text>
+                  <Text
+                    style={[
+                      styles.infoValue,
+                      { color: selectedUser?.isVerified ? "#0F8A5F" : "#B25E09" },
+                    ]}
+                  >
+                    {selectedUser?.isVerified ? "Verified ✓" : "Pending OTP"}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Registration Date:</Text>
+                  <Text style={styles.infoValue}>
+                    {formatJoined(selectedUser?.createdAt)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Service Provider Specific Details */}
+              {selectedUser?.role === "provider" && (
+                <View style={styles.infoSection}>
+                  <Text style={styles.infoSectionTitle}>
+                    🛠️ Service Provider Information
+                  </Text>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Category:</Text>
+                    <Text style={styles.infoValue}>
+                      {selectedUser?.providerDetails?.category || "General"}
+                    </Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Experience:</Text>
+                    <Text style={styles.infoValue}>
+                      {selectedUser?.providerDetails?.experience || "N/A"}
+                    </Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Admin Approval Status:</Text>
+                    <Text
+                      style={[
+                        styles.infoValue,
+                        {
+                          color:
+                            selectedUser?.providerDetails?.approvalStatus === "approved"
+                              ? "#0F8A5F"
+                              : selectedUser?.providerDetails?.approvalStatus === "rejected"
+                              ? COLORS.error
+                              : "#B25E09",
+                        },
+                      ]}
+                    >
+                      {(
+                        selectedUser?.providerDetails?.approvalStatus || "pending"
+                      ).toUpperCase()}
+                    </Text>
+                  </View>
+
+                  {/* Provider Document Previews */}
+                  <Text style={[styles.infoSectionTitle, { marginTop: 12 }]}>
+                    Verification Documents:
+                  </Text>
+
+                  <View style={styles.modalDocRow}>
+                    {selectedUser?.providerDetails?.nicFront ? (
+                      <TouchableOpacity
+                        style={styles.modalDocBox}
+                        onPress={() => setSelectedImage(selectedUser.providerDetails.nicFront)}
+                      >
+                        <Image
+                          source={{ uri: selectedUser.providerDetails.nicFront }}
+                          style={styles.modalDocThumb}
+                        />
+                        <Text style={styles.modalDocText}>NIC Front 🔍</Text>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {selectedUser?.providerDetails?.nicBack ? (
+                      <TouchableOpacity
+                        style={styles.modalDocBox}
+                        onPress={() => setSelectedImage(selectedUser.providerDetails.nicBack)}
+                      >
+                        <Image
+                          source={{ uri: selectedUser.providerDetails.nicBack }}
+                          style={styles.modalDocThumb}
+                        />
+                        <Text style={styles.modalDocText}>NIC Back 🔍</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Modal Dismiss Button */}
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setSelectedUser(null)}
+            >
+              <Text style={styles.modalCloseButtonText}>Close Account Details</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* --------------------------------------------------------------------------- */}
+      {/* 2. CREATE ADMIN MODAL FORM (KEYBOARD AWARE)                                 */}
+      {/* --------------------------------------------------------------------------- */}
+      <Modal
+        visible={showAddAdminModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeCreate}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.keyboardAvoidingModalContainer}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { paddingBottom: Math.max(24, insets.bottom) }]}>
+              {/* Modal Header */}
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={[styles.modalAvatar, { backgroundColor: "#FEE2E2" }]}>
+                    <Text style={[styles.modalAvatarText, { color: COLORS.error }]}>
+                      +
+                    </Text>
+                  </View>
+                  <View style={styles.modalHeaderTextGroup}>
+                    <Text style={styles.modalTitle}>Add System Admin</Text>
+                    <Text style={styles.modalSubtitle}>
+                      Create a new administrator account
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.closeBtn}
+                  onPress={closeCreate}
+                >
+                  <MaterialCommunityIcons name="close" size={24} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                style={styles.modalScroll}
+                contentContainerStyle={{ paddingBottom: 24 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                {addAdminError ? (
+                  <View style={styles.formErrorBox}>
+                    <Text style={styles.formErrorText}>{addAdminError}</Text>
+                  </View>
+                ) : null}
+
+                {/* Full Name */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Full Name *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    accessibilityLabel="Admin full name" maxLength={120} placeholder="e.g. Kasun Fernando"
+                    placeholderTextColor={COLORS.disabledText}
+                    value={adminName}
+                    onChangeText={(text) => {
+                      setAdminName(text);
+                      setAddAdminError("");
+                    }}
+                  />
+                </View>
+
+                {/* Email Address */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Email Address *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    accessibilityLabel="Admin email address" maxLength={254} placeholder="e.g. admin.kasun@fixmate.com"
+                    placeholderTextColor={COLORS.disabledText}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={adminEmail}
+                    onChangeText={(text) => {
+                      setAdminEmail(text);
+                      setAddAdminError("");
+                    }}
+                  />
+                </View>
+
+                {/* Phone Number */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Phone Number *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    accessibilityLabel="Admin phone number" maxLength={18} placeholder="e.g. 0771234567"
+                    placeholderTextColor={COLORS.disabledText}
+                    keyboardType="phone-pad"
+                    value={adminPhone}
+                    onChangeText={(text) => {
+                      setAdminPhone(text);
+                      setAddAdminError("");
+                    }}
+                  />
+                </View>
+
+                {/* Password */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Password *</Text>
+                  <View style={styles.passwordInputContainer}>
+                    <TextInput
+                      style={styles.passwordInputText}
+                      accessibilityLabel="Admin password" maxLength={72} placeholder="At least 6 characters"
+                      placeholderTextColor={COLORS.disabledText}
+                      secureTextEntry={!showPassword}
+                      value={adminPassword}
+                      onChangeText={(text) => {
+                        setAdminPassword(text);
+                        setAddAdminError("");
+                      }}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeBtn}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Text style={styles.eyeBtnText}>
+                        {showPassword ? "Hide" : "Show"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Confirm Password */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Confirm Password *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    accessibilityLabel="Confirm admin password" maxLength={72} placeholder="Re-enter password"
+                    placeholderTextColor={COLORS.disabledText}
+                    secureTextEntry={!showPassword}
+                    value={adminConfirmPassword}
+                    onChangeText={(text) => {
+                      setAdminConfirmPassword(text);
+                      setAddAdminError("");
+                    }}
+                  />
+                </View>
+
+                {/* Modal Submit Button Inside ScrollView */}
+                <TouchableOpacity
+                  style={styles.createAdminSubmitBtn}
+                  accessibilityRole="button" onPress={handleCreateAdmin}
+                  disabled={addAdminLoading}
+                >
+                  {addAdminLoading ? (
+                    <ActivityIndicator color={COLORS.secondary} />
+                  ) : (
+                    <Text style={styles.createAdminSubmitText}>
+                      + Create Admin Account
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Fullscreen Image Preview Zoom */}
+      <Modal
+        visible={!!selectedImage}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSelectedImage(null)}
+      >
+        <View style={styles.zoomModalBg}>
+          <TouchableOpacity
+            style={styles.zoomCloseBtn}
+            onPress={() => setSelectedImage(null)}
+          >
+            <Text style={styles.zoomCloseText}>✕ Close Image</Text>
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image
+              source={{ uri: selectedImage }}
+              style={styles.zoomFullImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 };
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
+  errorBanner: { backgroundColor: '#FDE8E8', padding: 14, borderRadius: 14, gap: 10, marginBottom: 14 },
+  errorText: { color: '#B42332', fontSize: 13 },
   screen: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -337,6 +759,7 @@ const styles = StyleSheet.create({
 
   // Header
   header: {
+    width: '100%', maxWidth: 760, alignSelf: 'center',
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -349,6 +772,24 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
     paddingRight: 12,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  addAdminBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  addAdminBtnText: {
+    color: COLORS.secondary,
+    fontWeight: "800",
+    fontSize: 13,
   },
   screenTitle: {
     fontSize: 24,
@@ -376,6 +817,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    width: '100%', maxWidth: 760, alignSelf: 'center',
     paddingHorizontal: 20,
     paddingTop: 18,
     paddingBottom: 24,
@@ -447,12 +889,15 @@ const styles = StyleSheet.create({
   chips: {
     flex: 1,
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
+    flexWrap: "nowrap",
+    gap: 6,
   },
   chip: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
     height: 40,
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: COLORS.inputBorder,
@@ -471,16 +916,6 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: COLORS.primary,
-  },
-  filterButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.inputBorder,
-    backgroundColor: COLORS.secondary,
-    alignItems: "center",
-    justifyContent: "center",
   },
 
   // Count
@@ -562,9 +997,6 @@ const styles = StyleSheet.create({
   statLeft: {
     textAlign: "left",
   },
-  statCenter: {
-    textAlign: "center",
-  },
   statRight: {
     textAlign: "right",
   },
@@ -581,7 +1013,16 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
 
-  // Empty state
+  // Loader & Empty state
+  loaderContainer: {
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    color: COLORS.textMuted,
+    fontSize: 14,
+  },
   empty: {
     alignItems: "center",
     paddingVertical: 48,
@@ -596,6 +1037,239 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     marginTop: 6,
     textAlign: "center",
+  },
+
+  // Keyboard Aware Container
+  keyboardAvoidingModalContainer: {
+    flex: 1,
+  },
+
+  // Modal Popup Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    width: '100%', maxWidth: 600, alignSelf: 'center',
+    backgroundColor: COLORS.secondary,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: "92%",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.inputBorder,
+  },
+  modalHeaderTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  modalAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  modalAvatarText: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  modalHeaderTextGroup: {
+    flex: 1,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  closeBtn: {
+    padding: 6,
+  },
+  modalScroll: {
+    marginVertical: 14,
+  },
+  infoSection: {
+    backgroundColor: COLORS.inputBg,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+  },
+  infoSectionTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginBottom: 10,
+  },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  infoLabel: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+  },
+  infoValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+  },
+  modalDocRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  modalDocBox: {
+    flex: 1,
+    alignItems: "center",
+    backgroundColor: COLORS.secondary,
+    padding: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+  },
+  modalDocThumb: {
+    width: 100,
+    height: 75,
+    borderRadius: 6,
+  },
+  modalDocText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.primary,
+    marginTop: 4,
+  },
+  modalCloseButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  modalCloseButtonText: {
+    color: COLORS.secondary,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  // Add Admin Form Styles
+  formErrorBox: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: COLORS.error,
+  },
+  formErrorText: {
+    color: COLORS.error,
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  formLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  formInput: {
+    backgroundColor: COLORS.inputBg,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+  passwordInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.inputBg,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderRadius: 12,
+  },
+  passwordInputText: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+  eyeBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  eyeBtnText: {
+    fontSize: 13,
+    color: COLORS.primary,
+    fontWeight: "700",
+  },
+  createAdminSubmitBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: "center",
+    marginTop: 16,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  createAdminSubmitText: {
+    color: COLORS.secondary,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  // Zoom Modal
+  zoomModalBg: {
+    flex: 1,
+    backgroundColor: "#000000",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  zoomCloseBtn: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    zIndex: 10,
+  },
+  zoomCloseText: {
+    color: COLORS.secondary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  zoomFullImage: {
+    width: "95%",
+    height: "85%",
   },
 });
 

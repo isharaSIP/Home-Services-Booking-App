@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
+import { useAuth } from "../../context/AuthContext";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { bookingService, BOOKING_TIMES, bookingDate, bookingTime, bookingWhen, bookingPreference, bookingPrice, money } from '../../services/bookingService';
@@ -31,6 +32,7 @@ function Detail({ label, value, edit }) {
 
 // The existing booking screen owns the flow; no new navigator or route tree.
 export function BookingFlowModal({ provider: initialProvider, onClose, onTrack, rescheduling }) {
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [provider, setProvider] = useState(initialProvider), [mode, setMode] = useState('published'), [windowEnd, setWindowEnd] = useState(null);
   const [alternatives, setAlternatives] = useState(null), [finding, setFinding] = useState(false), [alternativeError, setAlternativeError] = useState('');
@@ -39,7 +41,7 @@ export function BookingFlowModal({ provider: initialProvider, onClose, onTrack, 
   const [step, setStep] = useState(1), [slots, setSlots] = useState([]), [loading, setLoading] = useState(true);
   const [error, setError] = useState(''), [selected, setSelected] = useState(''), [day, setDay] = useState(localDay(new Date()));
   const [week, setWeek] = useState(0), [busy, setBusy] = useState(false), [sent, setSent] = useState(null);
-  const [problem, setProblem] = useState(rescheduling?.problem || ''), [location, setLocation] = useState(rescheduling?.location || ''), [notes, setNotes] = useState(rescheduling?.notes || '');
+  const [problem, setProblem] = useState(rescheduling?.problem || ''), [location, setLocation] = useState(rescheduling?.location || [user?.location?.address, user?.location?.city].filter(Boolean).join(', ')), [notes, setNotes] = useState(rescheduling?.notes || '');
   const request = useRef(null), lock = useRef(false), submission = useRef(null), scroll = useRef(null);
   const load = useCallback(() => {
     request.current?.abort(); const controller = new AbortController(); request.current = controller;

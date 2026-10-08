@@ -31,6 +31,12 @@ const userSchema = new mongoose.Schema(
       enum: ["customer", "provider", "admin"],
       default: "customer",
     },
+    location: {
+      address: { type: String, default: '', maxlength: 300 },
+      city: { type: String, default: '', maxlength: 120 },
+      latitude: { type: Number, default: null, min: -90, max: 90 },
+      longitude: { type: Number, default: null, min: -180, max: 180 },
+    },
     isVerified: {
       type: Boolean,
       default: false,
@@ -56,6 +62,7 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
     providerDetails: {
+      acceptingRequests: { type: Boolean, default: true },
       category: { type: String, default: "" },
       experience: { type: String, default: "" },
       qualifications: { type: String, default: "" },
