@@ -3,8 +3,6 @@ const router = express.Router();
 const { protect } = require("../middleware/authMiddleware");
 const { authorizeRoles } = require("../middleware/roleMiddleware");
 const {
-  list,
-  detail,
   getAvailability,
   updateWorkingDays,
   toggleOffDate,
@@ -12,18 +10,14 @@ const {
   removeSlot,
 } = require("../controllers/providerController");
 
-// The directory requires authentication, but is available to customers and providers.
+// All routes require authenticated Provider
 router.use(protect);
+router.use(authorizeRoles("provider"));
 
-router.get("/", list);
-
-// Provider management routes
-router.get("/availability", authorizeRoles("provider"), getAvailability);
-router.put("/availability/working-days", authorizeRoles("provider"), updateWorkingDays);
-router.post("/availability/toggle-off-date", authorizeRoles("provider"), toggleOffDate);
-router.post("/availability/slot", authorizeRoles("provider"), addSlot);
-router.delete("/availability/slot/:slotId", authorizeRoles("provider"), removeSlot);
-
-router.get("/:id", detail);
+router.get("/availability", getAvailability);
+router.put("/availability/working-days", updateWorkingDays);
+router.post("/availability/toggle-off-date", toggleOffDate);
+router.post("/availability/slot", addSlot);
+router.delete("/availability/slot/:slotId", removeSlot);
 
 module.exports = router;

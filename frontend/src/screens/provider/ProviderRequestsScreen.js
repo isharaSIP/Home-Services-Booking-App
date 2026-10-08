@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, Alert } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { COLORS, SHADOWS } from "../../constants/theme";
 import { useProviderData } from "../../context/ProviderContext";
 import Avatar from "../../components/provider/Avatar";
 import ScreenHeader, { BellButton } from "../../components/provider/ScreenHeader";
-import { bookingPreference, bookingPrice } from "../../services/bookingService";
+import { formatMoney } from "../../constants/providerData";
 
 const NOTICE_MS = 3000;
 
@@ -20,8 +20,8 @@ const Detail = ({ label, value, strong, align }) => (
   </View>
 );
 
-const RequestCard = ({ item, onAccept, onReject, busy }) => {
-  const [expanded, setExpanded] = useState(false), [rejecting, setRejecting] = useState(false);
+const RequestCard = ({ item, onAccept, onReject }) => {
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <View style={styles.card}>
@@ -50,13 +50,13 @@ const RequestCard = ({ item, onAccept, onReject, busy }) => {
       <View style={styles.details}>
         <View style={styles.detailRow}>
           <Detail label="Preferred date" value={item.date} />
-          <Detail label="Time" value={bookingPreference(item)} />
+          <Detail label="Time" value={item.time} />
         </View>
         <View style={[styles.detailRow, styles.detailRowSpaced]}>
           <View style={styles.locationCol}>
             <Detail label="Location" value={item.location} />
           </View>
-          <Detail label="Pricing" value={bookingPrice(item)} strong align="right" />
+          <Detail label="Estimated price" value={formatMoney(item.price)} strong align="right" />
         </View>
       </View>
 
@@ -78,21 +78,20 @@ const RequestCard = ({ item, onAccept, onReject, busy }) => {
           <Text style={styles.btnDetailsText}>{expanded ? "Less" : "Details"}</Text>
         </Pressable>
         <Pressable
-          disabled={busy} onPress={() => setRejecting(true)}
+          onPress={() => onReject(item)}
           style={({ pressed }) => [styles.btn, styles.btnReject, pressed && styles.pressed]}
           accessibilityRole="button"
         >
           <Text style={styles.btnRejectText}>Reject</Text>
         </Pressable>
         <Pressable
-          disabled={busy || item.status !== 'pending'} onPress={() => onAccept(item)}
+          onPress={() => onAccept(item)}
           style={({ pressed }) => [styles.btn, styles.btnAccept, pressed && styles.pressed]}
           accessibilityRole="button"
         >
-          <Text style={styles.btnAcceptText}>{busy ? "Saving…" : item.status === "time_proposed" ? "Awaiting reply" : "Accept"}</Text>
+          <Text style={styles.btnAcceptText}>Accept</Text>
         </Pressable>
       </View>
-      {rejecting && <View style={styles.details}><Text style={styles.description}>Reject this request? The customer will see that you declined.</Text><Pressable accessibilityRole="button" disabled={busy} style={styles.btn} onPress={async () => { if (await onReject(item)) setRejecting(false); }}><Text style={styles.btnRejectText}>Confirm rejection</Text></Pressable><Pressable accessibilityRole="button" disabled={busy} style={styles.btn} onPress={() => setRejecting(false)}><Text>Keep request</Text></Pressable></View>}
     </View>
   );
 };
@@ -102,7 +101,7 @@ const RequestCard = ({ item, onAccept, onReject, busy }) => {
 // ---------------------------------------------------------------------------
 const ProviderRequestsScreen = () => {
   const focused = useIsFocused();
-  const { requests, acceptRequest, rejectRequest, pendingCount, loading, error, busy, load } = useProviderData();
+  const { requests, acceptRequest, rejectRequest, pendingCount } = useProviderData();
   const [notice, setNotice] = useState("");
   const timer = useRef(null);
 
@@ -114,15 +113,23 @@ const ProviderRequestsScreen = () => {
     timer.current = setTimeout(() => setNotice(""), NOTICE_MS);
   }, []);
 
-  const handleAccept = async item => {
-    const updated = await acceptRequest(item.id);
-    if (updated) showNotice(updated.status === 'awaiting_quote' ? 'Appointment accepted. A quote is still required before work.' : 'Appointment accepted.');
+  const handleAccept = (item) => {
+    acceptRequest(item.id);
+    showNotice(`Accepted ${item.customer}'s request.`);
   };
-  const handleReject = async item => {
-    const updated = await rejectRequest(item.id);
-    if (updated) showNotice('Request rejected.');
-    return updated;
-  };
+
+  const handleReject = (item) =>
+    Alert.alert("Reject request?", `${item.customer}'s request for "${item.service}" will be declined.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Reject",
+        style: "destructive",
+        onPress: () => {
+          rejectRequest(item.id);
+          showNotice("Request rejected.");
+        },
+      },
+    ]);
 
   return (
     <View style={styles.screen}>
@@ -143,7 +150,7 @@ const ProviderRequestsScreen = () => {
         {!!notice && (
           <View style={styles.notice}>
             <MaterialCommunityIcons name="check-circle" size={16} color={COLORS.success} />
-            <Text accessibilityLiveRegion="polite" style={styles.noticeText}>{notice}</Text>
+            <Text style={styles.noticeText}>{notice}</Text>
           </View>
         )}
 
@@ -151,25 +158,21 @@ const ProviderRequestsScreen = () => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {loading && <ActivityIndicator accessibilityLabel="Loading requests" color={COLORS.primary} />}
-          {!!error && <Text accessibilityRole="alert" style={styles.btnRejectText}>{error}</Text>}
-          <Pressable accessibilityRole="button" disabled={busy || loading} onPress={load} style={styles.btn}><Text style={styles.service}>Refresh requests</Text></Pressable>
           {requests.length > 0 ? (
             requests.map((item) => (
               <RequestCard
                 key={item.id}
                 item={item}
-                busy={busy}
                 onAccept={handleAccept}
                 onReject={handleReject}
               />
             ))
-          ) : !loading && !error && (
+          ) : (
             <View style={styles.empty}>
               <View style={styles.emptyIcon}>
                 <MaterialCommunityIcons name="check-all" size={32} color={COLORS.primary} />
               </View>
-              <Text style={styles.emptyTitle}>You’re all caught up</Text>
+              <Text style={styles.emptyTitle}>You're all caught up</Text>
               <Text style={styles.emptyText}>
                 New booking requests will show up here when customers send them.
               </Text>
@@ -246,7 +249,7 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: "row" },
   detailRowSpaced: { marginTop: 12 },
   detail: { flex: 1 },
-  detailRight: { alignItems: "flex-end", flex: 1, marginLeft: 10 },
+  detailRight: { alignItems: "flex-end", flex: 0, marginLeft: 10 },
   locationCol: { flex: 1 },
   detailLabel: { fontSize: 12, color: COLORS.textMuted },
   detailValue: { fontSize: 14, fontWeight: "700", color: COLORS.textPrimary, marginTop: 3 },
@@ -257,9 +260,7 @@ const styles = StyleSheet.create({
 
   actions: { flexDirection: "row", gap: 10, marginTop: 16 },
   btn: {
-    minHeight: 46,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
+    height: 46,
     borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
