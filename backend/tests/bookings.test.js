@@ -25,7 +25,7 @@ test('preferred windows and service/travel intervals validate boundaries and gap
   assert.equal(overlaps('2026-10-07T00:30:00.000Z', 60, 30, booking), false); // actual gap
 });
 
-test('booking lifecycle, ownership, retries and concurrent slot reservations against isolated MongoDB', { skip: process.env.RUN_BOOKING_INTEGRATION !== '1', timeout: 90000 }, async () => {
+test('booking lifecycle, ownership, retries and concurrent slot reservations against isolated MongoDB', { skip: process.env.RUN_BOOKING_INTEGRATION !== '1', timeout: 180000 }, async () => {
   require('dotenv').config({ path: require('path').join(__dirname, '../.env'), quiet: true });
   const mongoose = require('mongoose');
   const dbName = 'fixmate_booking_test_' + require('crypto').randomBytes(8).toString('hex');
@@ -180,6 +180,18 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     assert.equal((await call(a)).body.bookings.find(b => b.id === fid).previousApprovedQuote.totalMinor, 250035);
     const declined = await call(a, '/' + fid, 'PATCH', { action: 'decline_quote', quoteVersion: 2 });
     assert.equal(declined.body.booking.status, 'ongoing'); assert.equal(declined.body.booking.quote.totalMinor, 250035);
+    // Accepted revisions replace the total and resume work in both roles' persisted lists.
+    const revision = await call(provider, '/' + fid, 'PATCH', { ...quoteInput, bookingVersion: declined.body.booking.version });
+    assert.equal(revision.body.booking.status, 'quote_pending');
+    assert.equal((await call(provider, '/' + fid, 'PATCH', { action: 'complete', bookingVersion: declined.body.booking.version })).status, 409);
+    const approvedRevision = await call(a, '/' + fid, 'PATCH', { action: 'approve_quote', quoteVersion: revision.body.booking.quote.version });
+    assert.equal(approvedRevision.body.booking.status, 'ongoing');
+    for (const user of [a, provider]) {
+      const persisted = (await call(user)).body.bookings.find(row => row.id === fid);
+      assert.equal(persisted.status, 'ongoing');
+      assert.equal(persisted.quote.version, revision.body.booking.quote.version);
+      assert.equal(persisted.quote.totalMinor, 250035);
+    }
     const done = await call(provider, '/' + fid, 'PATCH', { action: 'complete', totalMinor: 1 });
     assert.equal(done.body.booking.invoice.totalMinor, 250035);
     const cash = await pay(a, fid, { action: 'report', method: 'cash' });

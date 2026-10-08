@@ -183,15 +183,15 @@ export default function BookingsScreen({ navigation }) {
 }
 
 // Quote approval and payment remain in the existing booking details view.
-export function BookingCharges({ booking: b, onUpdate, provider = false }) {
+export function BookingCharges({ booking: b, onUpdate, provider = false, onBusyChange }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [reference, setReference] = useState(''), [declining, setDeclining] = useState(false);
   const previous = b.previousApprovedQuote;
   const consequence = previous ? 'Keep the previously agreed scope and total of ' + money(previous.totalMinor) + '. Only the proposed changes are declined.' : b.inspectionPerformed ? 'Decline repairs. The completed inspection fee of ' + money(b.pricing?.inspectionFeeMinor) + ' remains payable.' : 'Declining this quote cancels this request. No work or charge will be agreed.';
   const lock = useRef(false);
   async function run(action, payment = false, method) {
-    if (lock.current) return; lock.current = true; setBusy(true); setError('');
+    if (lock.current) return; lock.current = true; setBusy(true); onBusyChange?.(true); setError('');
     try { onUpdate(await (payment ? paymentService.update(b.id, { action, method, reference, reportedAt: b.payment?.reportedAt }) : bookingService.update(b.id, { action, bookingVersion: b.version, quoteVersion: b.quote?.version, proposalVersion: b.proposalVersion }))); }
-    catch (e) { setError(errorMessage(e)); } finally { lock.current = false; setBusy(false); }
+    catch (e) { setError(errorMessage(e)); } finally { lock.current = false; setBusy(false); onBusyChange?.(false); }
   }
   async function refreshBooking() {
     if (lock.current) return; lock.current = true; setBusy(true);
@@ -199,7 +199,7 @@ export function BookingCharges({ booking: b, onUpdate, provider = false }) {
     catch (e) { setError(errorMessage(e)); } finally { lock.current = false; setBusy(false); }
   }
   return <View style={[s.card, s.spaced]}>
-    {b.status === 'time_proposed' && <><Text style={s.sectionTitle}>Provider suggested another time</Text><Text style={s.value}>{bookingWhen(b.proposedStartsAt)}</Text><Text style={s.subtitle}>Your requested time is {bookingPreference(b)}. This suggestion is not reserved until you accept. Your agreed pricing stays the same.</Text>{!provider && <><Button title="Accept suggested time" disabled={busy} onPress={() => run('accept_time')} /><Button secondary title="Keep my requested time" disabled={busy} onPress={() => run('decline_time')} /></>}</>}
+    {b.status === 'time_proposed' && <><Text style={s.sectionTitle}>Provider suggested another time</Text><Text style={s.value}>{bookingWhen(b.proposedStartsAt)}</Text><Text style={s.subtitle}>{provider ? 'The customer requested' : 'Your requested time is'} {bookingPreference(b)}. This suggestion is not reserved until {provider ? 'the customer accepts' : 'you accept'}. Your agreed pricing stays the same.</Text>{!provider && <><Button title="Accept suggested time" disabled={busy} onPress={() => run('accept_time')} /><Button secondary title="Keep my requested time" disabled={busy} onPress={() => run('decline_time')} /></>}</>}
     <Text style={s.sectionTitle}>Pricing & payment</Text>{b.status === 'awaiting_quote' && <Text style={s.subtitle}>Appointment accepted. Work can start only after the customer approves the provider’s quote.</Text>}<Text style={s.value}>{bookingPrice(b)}</Text>
     {!!b.pricing?.inclusions && <Text style={s.subtitle}>Included: {b.pricing.inclusions}</Text>}{!!b.pricing?.exclusions && <Text style={s.subtitle}>Excluded: {b.pricing.exclusions}</Text>}
     {b.quote && <><Text style={[s.value, s.spaced]}>Quote {b.quote.version} · {b.quote.status}</Text><Text style={s.subtitle}>{b.quote.scope}</Text>{b.quote.items.map((item, i) => <Detail key={i} label={item.description} value={money(item.amountMinor)} />)}<Detail label="Quote total (all charges)" value={money(b.quote.totalMinor)} /></>}
