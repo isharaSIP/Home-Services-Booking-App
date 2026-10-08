@@ -1,7 +1,7 @@
-import React, { useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, TextInput } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useIsFocused } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, SHADOWS } from "../../constants/theme";
 import { useProviderData } from "../../context/ProviderContext";
@@ -163,11 +163,20 @@ function JobDetails({ job, busy, error, load, update, onUpdate, onClose, onMessa
   </KeyboardAvoidingView></Modal>;
 }
 
-const ProviderRequestsScreen = ({ navigation }) => {
+const ProviderRequestsScreen = ({ navigation, route }) => {
   const focused = useIsFocused();
   const { bookings, pendingCount, loading, error, busy, load, update, onUpdate } = useProviderData();
   const [tab, setTab] = useState('New requests'), [selected, setSelected] = useState(null);
   const groups = { 'New requests': NEW, 'Active jobs': ACTIVE, History: HISTORY };
+  const handled = useRef(null);
+  useFocusEffect(useCallback(() => {
+    if (route?.params?.openRequest && handled.current !== route.params.openRequest) {
+      handled.current = route.params.openRequest;
+      setSelected(route.params.bookingId || null);
+      if (['New requests', 'Active jobs', 'History'].includes(route.params.group)) setTab(route.params.group);
+      void load();
+    }
+  }, [route, load]));
   const jobs = bookings.filter(job => groups[tab].includes(job.status)).sort((a, b) => tab === 'History' ? new Date(b.updatedAt) - new Date(a.updatedAt) : new Date(a.startsAt) - new Date(b.startsAt));
   const job = bookings.find(b => b.id === selected);
   return <View style={styles.screen}>
@@ -182,7 +191,7 @@ const ProviderRequestsScreen = ({ navigation }) => {
       {!loading && !error && !jobs.length && <View style={styles.empty}><View style={styles.emptyIcon}><MaterialCommunityIcons name="briefcase-outline" size={32} color={COLORS.primary} /></View><Text style={styles.emptyTitle}>No {tab.toLowerCase()}</Text><Text style={styles.emptyText}>{tab === 'New requests' ? 'New customer requests will appear here.' : tab === 'Active jobs' ? 'Accepted appointments and ongoing work appear here.' : 'Completed, cancelled and declined jobs stay here, including invoices and receipts.'}</Text></View>}
     </ScrollView>
     {!!job && <JobDetails key={job.id} job={job} busy={busy} error={error} load={load} update={update} onUpdate={onUpdate} onClose={() => { setSelected(null); setTab(NEW.includes(job.status) ? 'New requests' : ACTIVE.includes(job.status) ? 'Active jobs' : 'History'); }} onMessage={() => { setSelected(null); navigation.navigate('Messages', { bookingId: job.id, openRequest: Date.now() }); }} />}
-    {!!selected && !job && <Modal visible onRequestClose={() => setSelected(null)}><View style={styles.scrollContent}><Text style={styles.description}>This booking is no longer available. Refresh your jobs to continue.</Text><Action title="Back to jobs" onPress={() => setSelected(null)} /></View></Modal>}
+    {!!selected && !job && <Modal visible onRequestClose={() => setSelected(null)}><View style={styles.scrollContent}><Text style={styles.description}>{loading ? "Loading this job…" : error || "This booking is no longer available to this account."}</Text><Action title="Retry loading job" disabled={loading} onPress={() => load()} /><Action title="Back to jobs" onPress={() => setSelected(null)} /></View></Modal>}
   </View>;
 };
 
