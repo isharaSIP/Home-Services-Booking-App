@@ -49,15 +49,33 @@ const OtpVerificationScreen = ({ route, navigation }) => {
     const result = await verifyOTP(identifier, otp.trim());
     setLoading(false);
 
-    if (result.success) {
-      // A token lets RootNavigator select the role. Pending providers stay here
-      // so the admin-review message remains visible, with Back to Login below.
-      setSuccessMessage(result.message || (result.requiresAdminApproval
-        ? "Account verified. Your provider profile is awaiting admin approval."
-        : "Account verified successfully!"));
-    } else {
-      setErrorMessage(result.message || "Invalid or expired OTP code");
+    if (!result.success) {
+      setErrorMessage(result.message || "OTP is incorrect. Please re-enter the code.");
+      setOtp(""); // Clear invalid input so user can re-enter
+      return;
     }
+
+    if (result.requiresAdminApproval) {
+      setSuccessMessage(result.message || "OTP verified successfully! Account is pending Admin Approval.");
+      setTimeout(() => {
+        navigation.replace("Login");
+      }, 2500);
+      return;
+    }
+
+    setSuccessMessage("Account verified successfully!");
+    setTimeout(() => {
+      const role = result.role || result.user?.role;
+      if (role === "customer") {
+        navigation.replace("CustomerNavigator");
+      } else if (role === "provider") {
+        navigation.replace("ProviderNavigator");
+      } else if (role === "admin") {
+        navigation.replace("AdminNavigator");
+      } else {
+        navigation.replace("Login");
+      }
+    }, 1000);
   };
 
   const handleResend = async () => {
@@ -118,15 +136,19 @@ const OtpVerificationScreen = ({ route, navigation }) => {
 
             <Text style={styles.label}>6-Digit OTP Code</Text>
             <TextInput
-              style={styles.otpInput}
+              style={[
+                styles.otpInput,
+                errorMessage && styles.otpInputError,
+              ]}
               placeholder="123456"
               placeholderTextColor="#CBD5E1"
               keyboardType="number-pad"
               maxLength={6}
               value={otp}
+              autoFocus={true}
               onChangeText={(text) => {
                 setOtp(text);
-                setErrorMessage("");
+                if (errorMessage) setErrorMessage("");
               }}
             />
 
@@ -283,6 +305,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     letterSpacing: 10,
     marginBottom: 20,
+  },
+  otpInputError: {
+    borderColor: COLORS.error,
+    backgroundColor: "#FFF5F5",
   },
   infoBox: {
     backgroundColor: "#EFF6FF",

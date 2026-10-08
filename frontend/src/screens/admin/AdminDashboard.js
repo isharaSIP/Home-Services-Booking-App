@@ -73,6 +73,7 @@ const AdminDashboard = ({ navigation }) => {
             </Text>
             <Text style={styles.role}>Platform Administrator · FixMate LK</Text>
           </View>
+          {/* Profile Icon Button */}
           <TouchableOpacity
             style={styles.avatar}
             onPress={() => navigation.navigate("AdminProfile")}

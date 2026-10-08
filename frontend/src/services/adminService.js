@@ -17,8 +17,8 @@ export const adminService = {
   },
 
   // Fetch all registered users & platform metrics from database
-  getAllUsers: async (signal) => {
-    const response = await api.get("/admin/users", { signal });
+  getAllUsers: async () => {
+    const response = await api.get("/admin/users");
     return response.data;
   },
 
@@ -35,8 +35,8 @@ export const adminService = {
   },
 
   // Delete current Admin account
-  deleteProfile: async (password) => {
-    const response = await api.delete("/admin/profile", { data: { password } });
+  deleteProfile: async () => {
+    const response = await api.delete("/admin/profile");
     return response.data;
   },
 };

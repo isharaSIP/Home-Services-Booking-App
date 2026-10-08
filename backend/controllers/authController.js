@@ -14,6 +14,7 @@ const sanitizeUser = (user) => {
     isVerified: user.isVerified,
     isApprovedByAdmin: user.isApprovedByAdmin,
     providerDetails: user.providerDetails || {},
+    location: user.location || {},
   };
 };
 
@@ -24,7 +25,7 @@ const sanitizeUser = (user) => {
  */
 const register = async (req, res) => {
   try {
-    const { name, email, phone, password, role, providerDetails } = req.body;
+    const { name, email, phone, password, role, providerDetails, location } = req.body;
 
     if (!name || !email || !phone || !password || !role) {
       return res.status(400).json({ message: "Please fill in all required fields" });
@@ -79,6 +80,13 @@ const register = async (req, res) => {
       otpExpires,
       otpAttempts: 0,
       otpLastSent: new Date(),
+      location: {
+        address: location?.address || "",
+        city: location?.city || "",
+        district: location?.district || "",
+        latitude: location?.latitude ? Number(location.latitude) : null,
+        longitude: location?.longitude ? Number(location.longitude) : null,
+      },
     };
 
     if (isProvider) {
@@ -134,7 +142,34 @@ const verifyOtp = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (user.isVerified) {
+    // Check OTP expiration
+    if (user.otpExpires && user.otpExpires < new Date()) {
+      return res.status(400).json({ message: "OTP has expired. Please request a new code." });
+    }
+
+    // Check attempt limits (max 5)
+    if (user.otpAttempts >= 5) {
+      return res.status(400).json({
+        message: "Too many failed attempts. Please click Resend OTP to get a new code.",
+      });
+    }
+
+    // Strict OTP code validation
+    if (user.otp && user.otp !== otp.toString().trim()) {
+      user.otpAttempts += 1;
+      await user.save();
+      const remaining = 5 - user.otpAttempts;
+      if (remaining <= 0) {
+        return res.status(400).json({
+          message: "OTP is incorrect. You have exceeded maximum attempts. Please click Resend OTP to get a new code.",
+        });
+      }
+      return res.status(400).json({
+        message: `OTP is incorrect. Please re-enter the code. (${remaining} attempt${remaining > 1 ? "s" : ""} remaining)`,
+      });
+    }
+
+    if (user.isVerified && !user.otp) {
       // Check if provider needs admin approval
       if (user.role === "provider" && (!user.isApprovedByAdmin || user.providerDetails?.approvalStatus !== "approved")) {
         return res.status(200).json({
@@ -149,27 +184,6 @@ const verifyOtp = async (req, res) => {
         message: "Account is already verified",
         token,
         user: sanitizeUser(user),
-      });
-    }
-
-    // Check OTP expiration
-    if (!user.otpExpires || user.otpExpires < new Date()) {
-      return res.status(400).json({ message: "OTP has expired. Please request a new code." });
-    }
-
-    // Check attempt limits (max 5)
-    if (user.otpAttempts >= 5) {
-      return res.status(400).json({
-        message: "Too many failed attempts. Please request a new OTP code.",
-      });
-    }
-
-    // Verify OTP code
-    if (user.otp !== otp.toString().trim()) {
-      user.otpAttempts += 1;
-      await user.save();
-      return res.status(400).json({
-        message: `Invalid OTP code. ${5 - user.otpAttempts} attempt(s) remaining.`,
       });
     }
 
@@ -481,39 +495,36 @@ const getMe = async (req, res) => {
   }
 };
 
-const updateProfile = async (req, res) => {
+/**
+ * @desc    Update user location in database
+ * @route   PUT /api/auth/location
+ * @access  Private
+ */
+const updateLocation = async (req, res) => {
   try {
-    if (!['customer', 'provider'].includes(req.user.role)) return res.status(403).json({ message: 'Use admin profile settings.' });
-    const allowed = {};
-    if (req.user.role === 'provider' && req.body.acceptingRequests !== undefined) {
-      if (typeof req.body.acceptingRequests !== 'boolean') return res.status(400).json({ message: 'Invalid request availability.' });
-      allowed['providerDetails.acceptingRequests'] = req.body.acceptingRequests;
+    if (!req.user) {
+      return res.status(401).json({ message: "User not authenticated" });
     }
-    for (const [key, max] of [['name', 120], ['phone', 18]]) {
-      if (req.body[key] !== undefined) {
-        if (typeof req.body[key] !== 'string' || !req.body[key].trim() || req.body[key].trim().length > max || (key === 'phone' && !/^\+?[\d\s-]{7,18}$/.test(req.body[key].trim()))) return res.status(400).json({ message: 'Enter a valid name and phone number.' });
-        allowed[key] = req.body[key].trim();
-      }
-    }
-    if (req.body.location !== undefined) {
-      const l = req.body.location;
-      if (!l || typeof l !== 'object' || typeof l.address !== 'string' || typeof l.city !== 'string' || l.address.trim().length > 300 || l.city.trim().length > 120 || (!l.address.trim() && !l.city.trim())) return res.status(400).json({ message: 'Enter a street address or city.' });
-      const valid = (v, max) => v === null || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= max);
-      if (!valid(l.latitude, 90) || !valid(l.longitude, 180) || (l.latitude === null) !== (l.longitude === null)) return res.status(400).json({ message: 'Enter valid latitude and longitude together.' });
-      allowed.location = { address: l.address.trim(), city: l.city.trim(), latitude: l.latitude, longitude: l.longitude };
-    }
-    if (req.user.role === 'provider' && req.body.providerDetails !== undefined) {
-      const d = req.body.providerDetails;
-      if (!d || typeof d !== 'object') return res.status(400).json({ message: 'Invalid provider profile.' });
-      for (const [key, max] of [['bio', 2000], ['serviceArea', 300], ['experience', 120]]) {
-        if (typeof d[key] !== 'string' || d[key].trim().length > max) return res.status(400).json({ message: 'Check your profile details.' });
-        allowed['providerDetails.' + key] = d[key].trim();
-      }
-    }
-    const user = await User.findByIdAndUpdate(req.user._id, { $set: allowed, ...(allowed['providerDetails.acceptingRequests'] !== undefined ? { $inc: { 'providerDetails.availabilityRevision': 1 } } : {}) }, { returnDocument: 'after', runValidators: true });
-    return res.json({ user: sanitizeUser(user) });
+
+    const { address, city, district, latitude, longitude } = req.body;
+
+    req.user.location = {
+      address: address !== undefined ? address : req.user.location?.address || "",
+      city: city !== undefined ? city : req.user.location?.city || "",
+      district: district !== undefined ? district : req.user.location?.district || "",
+      latitude: latitude !== undefined ? (latitude ? Number(latitude) : null) : req.user.location?.latitude || null,
+      longitude: longitude !== undefined ? (longitude ? Number(longitude) : null) : req.user.location?.longitude || null,
+    };
+
+    await req.user.save();
+
+    return res.status(200).json({
+      message: "Location updated successfully",
+      user: sanitizeUser(req.user),
+    });
   } catch (error) {
-    return res.status(error.code === 11000 ? 409 : 503).json({ message: error.code === 11000 ? 'This phone number belongs to another account.' : 'Unable to save your profile. Please try again.' });
+    console.error("Update Location Error:", error);
+    return res.status(500).json({ message: "Server error updating location" });
   }
 };
 
@@ -527,4 +538,5 @@ module.exports = {
   verifyResetOtp,
   resetPassword,
   getMe,
+  updateLocation,
 };

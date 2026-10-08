@@ -23,10 +23,7 @@ app.get("/", (req, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/providers", providerRoutes);
-app.use("/api/bookings", require("./routes/bookingRoutes"));
-
-app.use("/api/payments", require("./routes/paymentRoutes"));
+app.use("/api/provider", providerRoutes);
 
 const PORT = process.env.PORT || 5000;
 
