@@ -1,5 +1,15 @@
 import api from "./api";
 
+export const getProviders = async (signal) => {
+  const response = await api.get("/providers", { signal });
+  return response.data.providers;
+};
+
+export const getProvider = async (id, signal) => {
+  const response = await api.get(`/providers/${encodeURIComponent(id)}`, { signal });
+  return response.data.provider;
+};
+
 export const providerService = {
   // Fetch provider availability data (working days, off dates, slots) from backend DB
   getAvailability: async () => {
