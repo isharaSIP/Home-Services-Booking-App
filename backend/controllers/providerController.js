@@ -1,5 +1,5 @@
 // Only these public profile fields may leave the customer directory endpoint.
-const PUBLIC_FIELDS = "name providerDetails.category providerDetails.experience providerDetails.qualifications providerDetails.bio providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.price providerDetails.priceUnit providerDetails.rating providerDetails.reviewCount providerDetails.nextAvailableAt providerDetails.pricing";
+const PUBLIC_FIELDS = "name providerDetails.acceptingRequests providerDetails.category providerDetails.experience providerDetails.qualifications providerDetails.bio providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.price providerDetails.priceUnit providerDetails.rating providerDetails.reviewCount providerDetails.nextAvailableAt providerDetails.pricing";
 const APPROVED = {
   role: "provider",
   isVerified: true,
@@ -13,6 +13,7 @@ function publicProvider(user) {
     name: user.name,
     category: d.category || "Other",
     verified: true,
+    acceptingRequests: d.acceptingRequests !== false,
     experience: d.experience || "",
     qualifications: d.qualifications || "",
     bio: d.bio || "",

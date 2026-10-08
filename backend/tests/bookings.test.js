@@ -42,7 +42,7 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const [provider, a, b, otherProvider] = await Promise.all([make('Provider', 'provider', '0700000001'), make('Alice', 'customer', '0700000002'), make('Bob', 'customer', '0700000003'), make('OtherProvider', 'provider', '0700000004')]);
     const jwt = require('jsonwebtoken');
     const tokens = new Map([provider, a, b, otherProvider].map(u => [String(u._id), jwt.sign({ id: u._id, role: u.role }, process.env.JWT_SECRET, { expiresIn: '5m' })]));
-    const express = require('express'), app = express(); app.use(express.json()); app.use('/api/bookings', require('../routes/bookingRoutes')); app.use('/api/payments', require('../routes/paymentRoutes'));
+    const express = require('express'), app = express(); app.use(express.json()); app.use('/api/auth', require('../routes/authRoutes')); app.use('/api/providers', require('../routes/providerRoutes')); app.use('/api/bookings', require('../routes/bookingRoutes')); app.use('/api/payments', require('../routes/paymentRoutes'));
     server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${server.address().port}/api/bookings`;
     const call = async (user, path = '', method = 'GET', data) => { const res = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(user ? { Authorization: 'Bearer ' + tokens.get(String(user._id)) } : {}) }, body: data ? JSON.stringify(data) : undefined }); return { status: res.status, body: await res.json() }; };
@@ -69,6 +69,34 @@ test('booking lifecycle, ownership, retries and concurrent slot reservations aga
     const retry = await call(owner, '', 'POST', { ...payload, requestId: winnerIndex === 0 ? 'first' : 'second' });
     assert.equal(retry.body.booking.id, created.id);
     assert.equal(await Booking.countDocuments(), 1);
+    // Real booking chat is private, persistent and safe to retry concurrently.
+    const chat = '/' + created.id + '/messages';
+    assert.equal((await call(other, chat)).status, 404);
+    assert.equal((await call(otherProvider, chat, 'POST', { text: 'Unauthorized', requestId: 'unauthorized-123' })).status, 404);
+    assert.equal((await call(owner, chat, 'POST', { text: ' ', requestId: 'invalid-123456' })).status, 400);
+    const chats = await Promise.all([1, 2].map(() => call(owner, chat, 'POST', { text: 'Gate is open', requestId: 'chat-request-123456' })));
+    assert.ok(chats.every(r => r.status === 200));
+    assert.equal((await call(provider, chat)).body.messages.length, 1);
+    assert.equal((await call(provider, chat, 'POST', { text: 'On my way', requestId: 'provider-reply-1234' })).status, 200);
+    assert.equal((await call(owner, chat)).body.messages.length, 2);
+    assert.equal((await call(other)).body.bookings.length, 0);
+    assert.equal((await call(owner)).body.bookings[0].lastMessage.text, 'On my way');
+    const profile = async (u, data) => { const r = await fetch(base.replace('/bookings', '/auth/profile'), { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tokens.get(String(u._id)) }, body: JSON.stringify(data) }); return { status: r.status, body: await r.json() }; };
+    assert.equal((await profile(owner, { location: { address: 'Street', city: '', latitude: 91, longitude: 79 } })).status, 400);
+    const saved = await profile(owner, { name: 'Customer Updated', role: 'admin', isVerified: false, location: { address: 'Saved Street', city: 'Colombo', latitude: 6.9, longitude: 79.8 } });
+    assert.equal(saved.status, 200); assert.equal(saved.body.user.role, 'customer'); assert.equal(saved.body.user.location.city, 'Colombo'); assert.equal(saved.body.user.password, undefined);
+    assert.equal((await profile(provider, { acceptingRequests: false })).status, 200);
+    const paused = await call(other, '', 'POST', { ...payload, startsAt: third, requestId: 'paused' });
+    assert.equal(paused.status, 409); assert.match(paused.body.message, /paused/);
+    assert.ok((await call(owner, '/availability/' + provider._id)).body.slots.every(slot => !slot.available));
+    assert.equal((await profile(provider, { acceptingRequests: true, providerDetails: { bio: 'Home repairs', serviceArea: 'Colombo', experience: '5 years', rating: 5, approvalStatus: 'rejected' } })).status, 200);
+    const updatedProvider = await User.findById(provider._id); assert.equal(updatedProvider.providerDetails.approvalStatus, 'approved'); assert.equal(updatedProvider.providerDetails.rating, null);
+    assert.equal((await call(owner, '/slots/day', 'DELETE', { date: day })).status, 403);
+    assert.equal((await call(provider, '/slots/day', 'DELETE', { date: day })).status, 200);
+    const dayRemaining = (await call(provider, '/availability/' + provider._id)).body.slots;
+    assert.equal(dayRemaining.length, 1); assert.equal(dayRemaining[0].startsAt, first); assert.equal(dayRemaining[0].available, false);
+    for (const startsAt of [second, third]) assert.equal((await call(provider, '/slots', 'POST', { startsAt })).status, 200);
+
     assert.equal((await call(provider, '/slots', 'DELETE', { startsAt: first })).status, 409);
     const alerts = (await call(provider, '/notifications')).body.notifications;
     assert.equal(alerts.length, 1); assert.equal(alerts[0].readAt, null);

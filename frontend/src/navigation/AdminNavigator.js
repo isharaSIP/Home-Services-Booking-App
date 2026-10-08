@@ -2,6 +2,7 @@ import React from "react";
 import { StyleSheet } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../constants/theme";
 
 import AdminDashboard from "../screens/admin/AdminDashboard";
@@ -9,6 +10,7 @@ import VerificationScreen from "../screens/admin/VerificationScreen";
 import ComplaintsScreen from "../screens/admin/ComplaintsScreen";
 import UsersScreen from "../screens/admin/UsersScreen";
 import ReportsScreen from "../screens/admin/ReportsScreen";
+import AdminProfileScreen from "../screens/admin/AdminProfileScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -22,6 +24,7 @@ const TABS = [
 ];
 
 const AdminNavigator = () => {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       initialRouteName="Dashboard"
@@ -30,7 +33,7 @@ const AdminNavigator = () => {
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.textMuted,
         tabBarLabelStyle: styles.label,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [styles.tabBar, { height: 70 + insets.bottom, paddingBottom: Math.max(8, insets.bottom) }],
         tabBarItemStyle: styles.item,
       }}
     >
@@ -51,6 +54,13 @@ const AdminNavigator = () => {
           }}
         />
       ))}
+      <Tab.Screen
+        name="AdminProfile"
+        component={AdminProfileScreen}
+        options={{
+          tabBarItemStyle: { display: "none" },
+        }}
+      />
     </Tab.Navigator>
   );
 };

@@ -4,6 +4,8 @@ import { Image } from "expo-image";
 import { bookingPrice } from '../../services/bookingService';
 import ProviderProfileModal from "./ProviderProfileModal";
 import * as Location from "expo-location";
+import { useFocusEffect } from "@react-navigation/native";
+import { useAuth } from "../../context/AuthContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../constants/theme";
 import { getProvider, getProviders } from "../../services/providerService";
@@ -57,26 +59,29 @@ function Sheet({
       }]} accessibilityViewIsModal><View style={styles.sheetHeader}><Text accessibilityRole="header" style={styles.sheetTitle}>{title}</Text><Pressable accessibilityRole="button" accessibilityLabel="Close dialog" onPress={onClose} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View>{children}</View>
   </KeyboardAvoidingView></Modal>;
 }
-export default function ExploreScreen({ navigation }) {
+export default function ExploreScreen({ navigation, route }) {
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [providers, setProviders] = useState([]),
     [loading, setLoading] = useState(true),
     [refreshing, setRefreshing] = useState(false),
     [error, setError] = useState("");
   const [query, setQuery] = useState(""),
-    [category, setCategory] = useState("All"),
+    [category, setCategory] = useState(route?.params?.category || "All"),
     [filters, setFilters] = useState(EMPTY_FILTERS),
     [draft, setDraft] = useState(EMPTY_FILTERS),
     [filterError, setFilterError] = useState("");
   const [sheet, setSheet] = useState(null),
     [sort, setSort] = useState("name"),
-    [location, setLocation] = useState(null),
+    [location, setLocation] = useState(user?.location?.latitude != null ? user.location : null),
     [locating, setLocating] = useState(false),
     [locationError, setLocationError] = useState("");
   const [profile, setProfile] = useState(null),
     [profileId, setProfileId] = useState(null),
     [profileLoading, setProfileLoading] = useState(false),
     [profileError, setProfileError] = useState("");
+  useFocusEffect(useCallback(() => { if (route?.params?.category) setCategory(route.params.category); }, [route]));
+  useFocusEffect(useCallback(() => { if (user?.location?.latitude != null) setLocation(user.location); }, [user]));
   const listRequest = useRef(null),
     profileRequest = useRef(null),
     mounted = useRef(false);

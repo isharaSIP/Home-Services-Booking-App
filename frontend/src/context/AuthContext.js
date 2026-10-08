@@ -31,7 +31,7 @@ export const AuthProvider = ({ children }) => {
   const login = async (identifier, password) => {
     try {
       const data = await authService.login(identifier, password);
-      
+
       if (data.requiresVerification) {
         return { success: false, requiresVerification: true, identifier: data.identifier, message: data.message };
       }
@@ -124,6 +124,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const updateUserSession = async (updatedUser) => {
+    const nextUser = { ...user, ...updatedUser };
+    await authService.saveSession(token, nextUser);
+    setUser(nextUser);
+  };
+
   const logout = async () => {
     await authService.clearSession();
     setToken(null);
@@ -145,6 +151,7 @@ export const AuthProvider = ({ children }) => {
         forgotPassword,
         verifyResetOTP,
         resetPassword,
+        updateUserSession,
         logout,
         checkAuthState,
       }}

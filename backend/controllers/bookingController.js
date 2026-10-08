@@ -25,10 +25,10 @@ function validSlot(value, now = Date.now()) {
   return Number.isFinite(stamp) && date.toISOString().replace('.000Z', 'Z') === value.replace('.000Z', 'Z') && stamp > now && stamp < now + 90 * 86400000 && TIMES.includes(new Date(stamp + 19800000).toISOString().slice(11, 16));
 }
 function dto(b) {
-  return { id: String(b._id), reference: `FM-${new Date(b.createdAt).getUTCFullYear()}-${String(b._id).toUpperCase()}`, providerId: String(b.provider), providerName: b.providerName, customerName: b.customerName, service: b.service, startsAt: b.startsAt, scheduleMode: b.scheduleMode || "published", windowEnd: b.windowEnd, scheduleConfirmed: b.scheduleConfirmed, proposedStartsAt: b.proposedStartsAt, proposalVersion: b.proposalVersion, durationMinutes: b.durationMinutes ?? 60, bufferMinutes: b.bufferMinutes ?? 30, problem: b.problem, location: b.location, notes: b.notes, price: b.price, priceUnit: b.priceUnit, pricing: b.pricing, quote: b.quote, invoice: b.invoice, payment: b.payment, inspectionPerformed: b.inspectionPerformed, history: b.history || [], updatedAt: b.updatedAt, status: b.status, createdAt: b.createdAt };
+  return { lastMessage: b.messages?.length ? b.messages[b.messages.length - 1] : null, id: String(b._id), reference: `FM-${new Date(b.createdAt).getUTCFullYear()}-${String(b._id).toUpperCase()}`, providerId: String(b.provider), providerName: b.providerName, customerName: b.customerName, service: b.service, startsAt: b.startsAt, scheduleMode: b.scheduleMode || "published", windowEnd: b.windowEnd, scheduleConfirmed: b.scheduleConfirmed, proposedStartsAt: b.proposedStartsAt, proposalVersion: b.proposalVersion, durationMinutes: b.durationMinutes ?? 60, bufferMinutes: b.bufferMinutes ?? 30, problem: b.problem, location: b.location, notes: b.notes, price: b.price, priceUnit: b.priceUnit, pricing: b.pricing, quote: b.quote, invoice: b.invoice, payment: b.payment, inspectionPerformed: b.inspectionPerformed, history: b.history || [], updatedAt: b.updatedAt, status: b.status, createdAt: b.createdAt };
 }
 function createBookingController(Booking, User) {
-  const providerFields = 'name providerDetails.category providerDetails.price providerDetails.priceUnit providerDetails.pricing providerDetails.bookingSlots providerDetails.appointmentDurationMinutes providerDetails.travelBufferMinutes providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.rating providerDetails.reviewCount';
+  const providerFields = 'name providerDetails.acceptingRequests providerDetails.category providerDetails.price providerDetails.priceUnit providerDetails.pricing providerDetails.bookingSlots providerDetails.appointmentDurationMinutes providerDetails.travelBufferMinutes providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.rating providerDetails.reviewCount';
   const approvedProvider = id => User.findOne({ _id: id, ...APPROVED }).select(providerFields).lean();
   const reservations = (id, session) => Booking.find({ provider: id, slotKey: { $exists: true } }).select('startsAt durationMinutes bufferMinutes').session(session || null).lean();
   async function reserve(providerId, start, settings, session, exclude) {
@@ -42,15 +42,47 @@ function createBookingController(Booking, User) {
   const ownProvider = req => req.user.role === 'provider' && req.user.isVerified && req.user.isApprovedByAdmin && req.user.providerDetails?.approvalStatus === 'approved';
   const handle = fn => async (req, res) => { try { await fn(req, res); } catch (error) { if (error.httpStatus) return res.status(error.httpStatus).json({ message: error.message }); if (error.code === 11000) return res.status(409).json({ message: 'That appointment is no longer available. Please choose another time.' }); return res.status(503).json({ message: 'Booking service is temporarily unavailable. Please try again.' }); } };
   return {
+    removeDay: handle(async (req, res) => {
+      const date = req.body.date;
+      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date + 'T00:00:00+05:30')) || dayKey(date + 'T00:00:00+05:30') !== date || date < dayKey(new Date()) || Date.parse(date + 'T00:00:00+05:30') > Date.now() + 90 * 86400000) return res.status(400).json({ message: 'Choose a valid date within the next 90 days.' });
+      if (!ownProvider(req)) return res.status(403).json({ message: 'Provider verification is required.' });
+      await User.db.transaction(async session => {
+        await lockProvider(req.user._id, session);
+        const p = await User.findById(req.user._id).select('providerDetails.bookingSlots providerDetails.appointmentDurationMinutes providerDetails.travelBufferMinutes').session(session).lean();
+        const starts = (p.providerDetails.bookingSlots || []).filter(s => dayKey(s) === date && new Date(s) > new Date());
+        const busy = await reservations(req.user._id, session);
+        const removable = starts.filter(s => !busy.some(b => overlaps(s, scheduleSettings(p).durationMinutes, scheduleSettings(p).bufferMinutes, b)));
+        await User.updateOne({ _id: req.user._id }, { $pull: { 'providerDetails.bookingSlots': { $in: removable } } }, { session });
+      });
+      res.json({ message: 'Open appointments removed. Existing booked jobs remain scheduled.' });
+    }),
+    messages: handle(async (req, res) => {
+      if (!idOK(req.params.id)) return res.status(400).json({ message: 'Invalid booking.' });
+      const b = await Booking.findOne({ _id: req.params.id, [req.user.role === 'provider' ? 'provider' : 'customer']: req.user._id }).select('messages').lean();
+      if (!b) return res.status(404).json({ message: 'Conversation unavailable.' });
+      res.json({ messages: b.messages || [] });
+    }),
+    sendMessage: handle(async (req, res) => {
+      const { text, requestId } = req.body;
+      if (!idOK(req.params.id) || !textOK(text, 2000) || typeof requestId !== 'string' || !/^[a-zA-Z0-9-]{12,100}$/.test(requestId)) return res.status(400).json({ message: 'Enter a message of up to 2,000 characters.' });
+      const owner = { _id: req.params.id, [req.user.role === 'provider' ? 'provider' : 'customer']: req.user._id };
+      const b = await Booking.findOne(owner).select('messages').lean();
+      if (!b) return res.status(404).json({ message: 'Conversation unavailable.' });
+      const message = { id: requestId, sender: String(req.user._id), text: text.trim(), createdAt: new Date() };
+      await Booking.updateOne({ ...owner, 'messages.id': { $ne: requestId } }, { $push: { messages: message } });
+      const updated = await Booking.findOne(owner).select('messages').lean();
+      res.json({ messages: updated.messages || [] });
+    }),
     availability: handle(async (req, res) => {
       if (!idOK(req.params.providerId)) return res.status(400).json({ message: 'Invalid provider.' });
       const p = await approvedProvider(req.params.providerId);
       if (!p) return res.status(404).json({ message: 'This provider is no longer available.' });
+
       const now = Date.now();
       const slots = (p.providerDetails?.bookingSlots || []).filter(s => new Date(s).getTime() > now && new Date(s).getTime() < now + 90 * 86400000);
       const rows = await reservations(p._id), settings = scheduleSettings(p);
       const excluded = idOK(req.query.excludeBookingId) && await Booking.exists({ _id: req.query.excludeBookingId, provider: p._id, ...(req.user.role === 'customer' ? { customer: req.user._id } : { provider: req.user._id }) });
-      res.json({ pricing: publicPricing(p.providerDetails.pricing), ...settings, timezone: 'Asia/Colombo', slots: slots.map(s => ({ startsAt: new Date(s).toISOString(), date: dayKey(s), available: !rows.some(b => !(excluded && String(b._id) === req.query.excludeBookingId) && overlaps(s, settings.durationMinutes, settings.bufferMinutes, b)) })).sort((a, b) => a.startsAt.localeCompare(b.startsAt)) });
+      res.json({ pricing: publicPricing(p.providerDetails.pricing), ...settings, timezone: 'Asia/Colombo', slots: slots.map(s => ({ startsAt: new Date(s).toISOString(), date: dayKey(s), available: (req.user.role === 'provider' || p.providerDetails.acceptingRequests !== false) && !rows.some(b => !(excluded && String(b._id) === req.query.excludeBookingId) && overlaps(s, settings.durationMinutes, settings.bufferMinutes, b)) })).sort((a, b) => a.startsAt.localeCompare(b.startsAt)) });
     }),
     alternatives: handle(async (req, res) => {
       if (!idOK(req.params.providerId) || !validSlot(req.query.startsAt)) return res.status(400).json({ message: 'Choose a future preferred time.' });
@@ -58,7 +90,7 @@ function createBookingController(Booking, User) {
       if (!p) return res.status(404).json({ message: 'Provider not found.' });
       const providers = await User.find({ ...APPROVED, _id: { $ne: p._id }, 'providerDetails.category': p.providerDetails.category }).select(providerFields).sort({ name: 1, _id: 1 }).lean();
       const busy = providers.length ? await Booking.find({ provider: { $in: providers.map(row => row._id) }, slotKey: { $exists: true } }).select('provider startsAt durationMinutes bufferMinutes').lean() : [];
-      const result = providers.filter(row => (row.providerDetails.bookingSlots || []).some(s => new Date(s).getTime() === new Date(req.query.startsAt).getTime()) && !busy.some(b => String(b.provider) === String(row._id) && overlaps(req.query.startsAt, scheduleSettings(row).durationMinutes, scheduleSettings(row).bufferMinutes, b))).slice(0, 6).map(require('./providerController').publicProvider);
+      const result = providers.filter(row => row.providerDetails.acceptingRequests !== false && (row.providerDetails.bookingSlots || []).some(s => new Date(s).getTime() === new Date(req.query.startsAt).getTime()) && !busy.some(b => String(b.provider) === String(row._id) && overlaps(req.query.startsAt, scheduleSettings(row).durationMinutes, scheduleSettings(row).bufferMinutes, b))).slice(0, 6).map(require('./providerController').publicProvider);
       res.json({ providers: result });
     }),
     create: handle(async (req, res) => {
@@ -68,6 +100,7 @@ function createBookingController(Booking, User) {
       if (existing) return res.json({ booking: dto(existing) });
       if (!validPreference(startsAt, scheduleMode, windowEnd)) return res.status(400).json({ message: 'Choose a future time or a valid same-day window within the next 90 days.' });
       const p = await approvedProvider(providerId);
+      if (p?.providerDetails.acceptingRequests === false) return res.status(409).json({ message: 'This provider paused new requests. Choose another provider or try later.' });
       if (!p) return res.status(404).json({ message: 'This provider is no longer available.' });
       if (scheduleMode === 'published' && !(p.providerDetails.bookingSlots || []).some(s => new Date(s).getTime() === new Date(startsAt).getTime())) return res.status(409).json({ message: 'This appointment was withdrawn. Choose an alternative or request your preferred time.' });
       const pricing = p.providerDetails.pricing;
@@ -76,7 +109,7 @@ function createBookingController(Booking, User) {
       const settings = scheduleSettings(p);
       let booking;
       try { await User.db.transaction(async session => {
-        await lockProvider(p._id, session, { ...(scheduleMode === 'published' ? { 'providerDetails.bookingSlots': new Date(startsAt) } : {}), ...(pricing ? { 'providerDetails.pricing.version': pricing.version } : { 'providerDetails.pricing': null }) });
+        await lockProvider(p._id, session, { 'providerDetails.acceptingRequests': { $ne: false }, ...(scheduleMode === 'published' ? { 'providerDetails.bookingSlots': new Date(startsAt) } : {}), ...(pricing ? { 'providerDetails.pricing.version': pricing.version } : { 'providerDetails.pricing': null }) });
         const fresh = await User.findById(p._id).select('providerDetails.appointmentDurationMinutes providerDetails.travelBufferMinutes').session(session).lean();
         if (JSON.stringify(scheduleSettings(fresh)) !== JSON.stringify(settings)) throw conflict('Scheduling settings changed. Refresh before requesting.');
         if (scheduleMode === 'published') await reserve(p._id, startsAt, settings, session);

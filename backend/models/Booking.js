@@ -17,6 +17,7 @@ const schema = new mongoose.Schema({
   problem: { type: String, required: true, maxlength: 2000 },
   location: { type: String, required: true, maxlength: 500 },
   notes: { type: String, default: '', maxlength: 1000 },
+  messages: { type: [{ id: String, sender: String, text: { type: String, maxlength: 2000 }, createdAt: Date }], default: [] },
   price: { type: Number, default: null },
   priceUnit: { type: String, default: 'visit' },
   pricing: { type: mongoose.Schema.Types.Mixed, default: null },

@@ -10,6 +10,7 @@ const sanitizeUser = (user) => {
     email: user.email,
     phone: user.phone,
     role: user.role,
+    location: user.location || {},
     isVerified: user.isVerified,
     isApprovedByAdmin: user.isApprovedByAdmin,
     providerDetails: user.providerDetails || {},
@@ -480,7 +481,44 @@ const getMe = async (req, res) => {
   }
 };
 
+const updateProfile = async (req, res) => {
+  try {
+    if (!['customer', 'provider'].includes(req.user.role)) return res.status(403).json({ message: 'Use admin profile settings.' });
+    const allowed = {};
+    if (req.user.role === 'provider' && req.body.acceptingRequests !== undefined) {
+      if (typeof req.body.acceptingRequests !== 'boolean') return res.status(400).json({ message: 'Invalid request availability.' });
+      allowed['providerDetails.acceptingRequests'] = req.body.acceptingRequests;
+    }
+    for (const [key, max] of [['name', 120], ['phone', 18]]) {
+      if (req.body[key] !== undefined) {
+        if (typeof req.body[key] !== 'string' || !req.body[key].trim() || req.body[key].trim().length > max || (key === 'phone' && !/^\+?[\d\s-]{7,18}$/.test(req.body[key].trim()))) return res.status(400).json({ message: 'Enter a valid name and phone number.' });
+        allowed[key] = req.body[key].trim();
+      }
+    }
+    if (req.body.location !== undefined) {
+      const l = req.body.location;
+      if (!l || typeof l !== 'object' || typeof l.address !== 'string' || typeof l.city !== 'string' || l.address.trim().length > 300 || l.city.trim().length > 120 || (!l.address.trim() && !l.city.trim())) return res.status(400).json({ message: 'Enter a street address or city.' });
+      const valid = (v, max) => v === null || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= max);
+      if (!valid(l.latitude, 90) || !valid(l.longitude, 180) || (l.latitude === null) !== (l.longitude === null)) return res.status(400).json({ message: 'Enter valid latitude and longitude together.' });
+      allowed.location = { address: l.address.trim(), city: l.city.trim(), latitude: l.latitude, longitude: l.longitude };
+    }
+    if (req.user.role === 'provider' && req.body.providerDetails !== undefined) {
+      const d = req.body.providerDetails;
+      if (!d || typeof d !== 'object') return res.status(400).json({ message: 'Invalid provider profile.' });
+      for (const [key, max] of [['bio', 2000], ['serviceArea', 300], ['experience', 120]]) {
+        if (typeof d[key] !== 'string' || d[key].trim().length > max) return res.status(400).json({ message: 'Check your profile details.' });
+        allowed['providerDetails.' + key] = d[key].trim();
+      }
+    }
+    const user = await User.findByIdAndUpdate(req.user._id, { $set: allowed, ...(allowed['providerDetails.acceptingRequests'] !== undefined ? { $inc: { 'providerDetails.availabilityRevision': 1 } } : {}) }, { returnDocument: 'after', runValidators: true });
+    return res.json({ user: sanitizeUser(user) });
+  } catch (error) {
+    return res.status(error.code === 11000 ? 409 : 503).json({ message: error.code === 11000 ? 'This phone number belongs to another account.' : 'Unable to save your profile. Please try again.' });
+  }
+};
+
 module.exports = {
+  updateProfile,
   register,
   verifyOtp,
   resendOtp,

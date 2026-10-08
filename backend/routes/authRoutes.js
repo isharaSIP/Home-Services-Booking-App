@@ -23,5 +23,6 @@ router.post("/reset-password", resetPassword);
 
 // Protected route
 router.get("/me", protect, getMe);
+router.patch('/profile', protect, require('../controllers/authController').updateProfile);
 
 module.exports = router;
