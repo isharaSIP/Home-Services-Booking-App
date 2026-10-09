@@ -33,7 +33,11 @@ export const ProviderDataProvider = ({ children }) => {
     if (lock.current) return;
     request.current?.abort(); const c = new AbortController(); request.current = c;
     if (!quiet) { setLoading(true); setError(''); }
-    try { const rows = await bookingService.list(c.signal); if (!c.signal.aborted) { setBookings(rows); setLoaded(true); setAsOf(new Date()); setError(''); } return rows; }
+    try { const rows = await bookingService.list(c.signal); if (!c.signal.aborted) {
+      setBookings(rows); setLoaded(true); setAsOf(new Date()); setError('');
+      const reviews = rows.filter(b => Number.isInteger(b.review?.rating) && b.review.rating >= 1 && b.review.rating <= 5);
+      if (reviews.length) setAccount(current => current ? { ...current, providerDetails: { ...current.providerDetails, rating: reviews.reduce((sum, b) => sum + b.review.rating, 0) / reviews.length, reviewCount: reviews.length } } : current);
+    } return rows; }
     catch (e) { if (!c.signal.aborted) setError(e.response?.data?.message || 'Unable to load jobs. Check your connection and retry.'); }
     finally { if (!c.signal.aborted) setLoading(false); }
   }, []);
@@ -70,7 +74,13 @@ export const ProviderDataProvider = ({ children }) => {
     await updateUserSession(updated);
     return updated;
   };
-  const value = { saveProfile, account: account || user, loaded, metrics, notifications, notificationError, notificationsLoading, loadNotifications, markRead, online, setOnline, bookings, requests, loading, error, busy, load, update, onUpdate, acceptRequest: id => update(id, { action: 'confirm' }), rejectRequest: id => update(id, { action: 'reject' }), pendingCount: requests.length, urgentCount: 0 };
+  const savePricing = async values => {
+    profileRevision.current++;
+    const pricing = await bookingService.savePricing(values);
+    setAccount(current => ({ ...(current || user), providerDetails: { ...(current || user)?.providerDetails, pricing } }));
+    return pricing;
+  };
+  const value = { savePricing, saveProfile, account: account || user, loaded, metrics, notifications, notificationError, notificationsLoading, loadNotifications, markRead, online, setOnline, bookings, requests, loading, error, busy, load, update, onUpdate, acceptRequest: id => update(id, { action: 'confirm' }), rejectRequest: id => update(id, { action: 'reject' }), pendingCount: requests.length, urgentCount: 0 };
   return <ProviderContext.Provider value={value}>{children}</ProviderContext.Provider>;
 };
 export const useProviderData = () => {

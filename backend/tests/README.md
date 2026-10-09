@@ -99,3 +99,22 @@ isolated database in its cleanup. It covers persistence, invalid/oversized files
 permissions, duplicate phone, live public/booking identity, preview-before-save,
 failed-save recovery, narrow layout, session reload and the customer profile.
 Native-device picker/permission dialogs still require physical-device testing.
+
+Pricing and booking reviews:
+
+```powershell
+node --test tests/reviews-pricing.test.js tests/providers.test.js
+$env:RUN_REVIEW_INTEGRATION='1'
+node --test tests/reviews-pricing.test.js
+```
+
+The integration test uses a random `fixmate_review_test_*` database and removes
+only that database afterward. It covers review ownership, completed-booking
+eligibility, invalid/stale submissions, concurrent duplicates, aggregate ratings,
+public review privacy, and fixed/estimated/inspection pricing. Atlas must be reachable.
+
+For the browser fixture test, start Expo web on port 8093, set `PLAYWRIGHT_PATH`
+to an existing Playwright installation, then run
+`node tests/reviews-pricing-browser.cjs` from `frontend`. It checks the actual UI
+for provider price publication, review recovery, public reviews, reference prices,
+and booking consent. Its intercepted API fixtures do not prove database persistence.
