@@ -322,7 +322,7 @@ export default function MessagesScreen({
       lastMessage: b.lastMessage?.text || "Tap to chat about this booking",
       time: b.lastMessage ? bookingWhen(b.lastMessage.createdAt) : "New",
       unread: 0,
-      avatar: null,
+      avatar: user.role === 'customer' && b.providerAvatar ? { uri: b.providerAvatar } : null,
       isBackendBooking: true,
     })),
     ...DEMO_CONTACTS,

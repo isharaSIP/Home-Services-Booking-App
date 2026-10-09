@@ -17,6 +17,7 @@ const publicProvider = (provider) => {
   return {
     id: String(provider._id),
     name: provider.name,
+    avatar: provider.avatar || "",
     category: details.category || "",
     serviceArea: details.serviceArea || "",
     price: details.pricing && details.pricing.type !== "inspection" ? details.price ?? null : null,
@@ -38,7 +39,7 @@ const createProviderController = (UserModel, nextAppointment) => ({
   async list(_req, res) {
     try {
       const providers = await UserModel.find(APPROVED_PROVIDER)
-        .select("name providerDetails")
+        .select("name avatar providerDetails")
         .sort({ name: 1, _id: 1 })
         .lean();
       return res.status(200).json({
@@ -62,7 +63,7 @@ const createProviderController = (UserModel, nextAppointment) => ({
         _id: req.params.id,
         ...APPROVED_PROVIDER,
       })
-        .select("name providerDetails")
+        .select("name avatar providerDetails")
         .lean();
       if (!provider) return res.status(404).json({ message: "Provider not found." });
       if (provider.providerDetails?.acceptingRequests === false) {

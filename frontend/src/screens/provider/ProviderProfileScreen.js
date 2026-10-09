@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, Alert, ActivityIndicator } from "react-native";
+import React, { useRef, useState } from "react";
+import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, Alert, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform, Image } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { COLORS, SHADOWS } from "../../constants/theme";
@@ -8,6 +8,9 @@ import Avatar from "../../components/provider/Avatar";
 import ScreenHeader, { BellButton } from "../../components/provider/ScreenHeader";
 import { useProviderData } from '../../context/ProviderContext';
 import { money, bookingPrice, bookingWhen } from '../../services/bookingService';
+
+import * as ImagePicker from "expo-image-picker";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const GREEN = "#0F8A5F";
 const STAR = "#E59A0C";
@@ -58,14 +61,14 @@ const chart = StyleSheet.create({
 // ---------------------------------------------------------------------------
 const ProviderProfileScreen = ({ navigation }) => {
   const { logout } = useAuth();
-  const { account: user, metrics, loaded, loading, error, load } = useProviderData();
+  const { account: user, metrics, loaded, loading, error, load, saveProfile } = useProviderData();
   const [historyOpen, setHistoryOpen] = useState(false);
   const details = user?.providerDetails || {};
   const rating = details.reviewCount > 0 && Number.isFinite(details.rating) ? details.rating.toFixed(1) : '—';
   const verified = user?.isVerified && user?.isApprovedByAdmin && details.approvalStatus === 'approved';
   const focused = useIsFocused();
   const name = user?.name || "Service Provider";
-  const comingSoon = (title) => Alert.alert(title, "Coming soon.");
+  const [editing, setEditing] = useState(false), [notice, setNotice] = useState("");
 
   const confirmLogout = () =>
     Alert.alert("Log out", "Are you sure you want to log out of this account?", [
@@ -79,7 +82,7 @@ const ProviderProfileScreen = ({ navigation }) => {
 
       <ScreenHeader title="Profile & earnings">
         <Pressable
-          onPress={() => comingSoon("Edit profile")}
+          onPress={() => { setNotice(""); setEditing(true); }}
           style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
           accessibilityRole="button"
           accessibilityLabel="Edit profile"
@@ -90,7 +93,9 @@ const ProviderProfileScreen = ({ navigation }) => {
         <BellButton />
       </ScreenHeader>
 
+      {editing && <EditProviderProfile user={user} saveProfile={saveProfile} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setNotice("Profile saved. Your public profile has been updated."); }} />}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {!!notice && <Text accessibilityLiveRegion="polite" style={{ color: GREEN }}>{notice}</Text>}
         {loading && <ActivityIndicator accessibilityLabel="Loading earnings" color={COLORS.primary} />}
         {!!error && <Text accessibilityRole="alert" style={{ color: '#B52636' }}>{error}</Text>}
         <Pressable accessibilityRole="button" disabled={loading} onPress={() => load()} style={{ minHeight: 48, justifyContent: 'center' }}><Text style={styles.editText}>Refresh earnings</Text></Pressable>
@@ -145,6 +150,8 @@ const ProviderProfileScreen = ({ navigation }) => {
               </View>
             ))}
           </View>
+          {!!details.serviceArea && <Text style={[styles.serviceUnit, { marginTop: 14 }]}>{details.serviceArea}</Text>}
+          {!!details.bio && <Text style={[styles.serviceUnit, { marginTop: 8 }]}>{details.bio}</Text>}
         </View>
 
         {/* Earnings */}
@@ -198,6 +205,55 @@ const ProviderProfileScreen = ({ navigation }) => {
     </View>
   );
 };
+
+function EditProviderProfile({ user, saveProfile, onClose, onSaved }) {
+  const details = user?.providerDetails || {}, insets = useSafeAreaInsets();
+  const [form, setForm] = useState({ name: user?.name || '', phone: user?.phone || '', bio: details.bio || '', serviceArea: details.serviceArea || '', experience: details.experience || '' });
+  const [avatar, setAvatar] = useState(user?.avatar || ''), [error, setError] = useState(''), [busy, setBusy] = useState(false), [picking, setPicking] = useState(false);
+  const lock = useRef(false), scroll = useRef(null), nameInput = useRef(null);
+  const locked = busy || picking;
+  const fail = message => { setError(message); scroll.current?.scrollTo({ y: 0, animated: true }); };
+  async function choosePhoto() {
+    if (lock.current) return; lock.current = true; setPicking(true); setError('');
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.7, base64: true });
+      if (result.canceled) return;
+      const asset = result.assets?.[0], data = asset?.base64;
+      const type = data?.startsWith('/9j/') ? 'jpeg' : data?.startsWith('iVBORw0KGgo') ? 'png' : null;
+      if (!type || !data) throw new Error('Choose a JPEG or PNG photo. This file type cannot be used.');
+      if (data.length * 3 / 4 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) > 1024 * 1024) throw new Error('Choose a smaller photo (under 1 MB), then try again.');
+      const uri = `data:image/${type};base64,${data}`;
+      await new Promise((resolve, reject) => Image.getSize(uri, resolve, () => reject(new Error('This photo cannot be opened. Choose another image.'))));
+      setAvatar(uri);
+    } catch (e) { fail(/unsupported file type/i.test(e.message || '') ? 'Choose a JPEG or PNG photo. This file type cannot be used.' : e.message || 'Could not open your photos. Check photo permissions in device settings and try again.'); }
+    finally { lock.current = false; setPicking(false); }
+  }
+  async function save() {
+    if (lock.current) return;
+    if (!form.name.trim() || form.name.trim().length > 120 || (!/^\+?[\d\s-]{7,18}$/.test(form.phone.trim()) || form.phone.replace(/\D/g, '').length < 7)) { fail('Enter your name and a valid phone number.'); nameInput.current?.focus(); return; }
+    lock.current = true; setBusy(true); setError('');
+    try { await saveProfile({ name: form.name.trim(), phone: form.phone.trim(), ...(avatar !== (user?.avatar || '') ? { avatar } : {}), providerDetails: { bio: form.bio.trim(), experience: form.experience.trim(), serviceArea: form.serviceArea.trim() } }); onSaved(); }
+    catch (e) { fail(e.response?.data?.message || 'Profile was not saved. Your changes are kept. Check your connection and try again.'); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  return <Modal visible animationType="slide" onRequestClose={() => { if (!locked) onClose(); }}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={edit.header}><Pressable accessibilityRole="button" accessibilityLabel="Cancel profile editing" disabled={locked} onPress={onClose} style={edit.smallButton}><MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.textPrimary} /></Pressable><Text accessibilityRole="header" style={edit.title}>Edit profile</Text></View>
+    <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={[edit.content, { paddingBottom: 24 + insets.bottom }]}>
+      {!!error && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={edit.error}>{error}</Text>}
+      <View style={[styles.card, edit.photo]}><Avatar name={form.name} uri={avatar} size={96} radius={48} /><Text style={edit.help}>Profile photo preview · JPEG or PNG, up to 1 MB</Text><Pressable accessibilityRole="button" disabled={locked} onPress={choosePhoto} style={edit.secondary}><Text style={styles.editText}>{picking ? 'Opening photos…' : 'Choose profile photo'}</Text></Pressable>{!!avatar && <Pressable accessibilityRole="button" disabled={locked} onPress={() => setAvatar('')} style={edit.smallButton}><Text style={styles.editText}>Remove photo</Text></Pressable>}</View>
+      <View style={styles.card}>{[['name', 'Full name *', 120], ['phone', 'Phone number *', 18], ['serviceArea', 'Service area', 300], ['experience', 'Experience', 120], ['bio', 'About you', 2000]].map(([key, label, maxLength]) => <View key={key}><Text style={edit.label}>{label}</Text><TextInput ref={key === 'name' ? nameInput : undefined} accessibilityLabel={label} editable={!locked} value={form[key]} onChangeText={value => setForm(current => ({ ...current, [key]: value }))} maxLength={maxLength} keyboardType={key === 'phone' ? 'phone-pad' : 'default'} multiline={key === 'bio'} style={[edit.input, key === 'bio' && { minHeight: 112, textAlignVertical: 'top' }]} /></View>)}<Text style={edit.label}>Email</Text><Text selectable style={edit.help}>{user?.email}</Text><Text style={edit.label}>Service category</Text><Text style={edit.help}>{details.category || 'Not set'}</Text><Text style={edit.help}>Email and verified service details are managed separately. Your pricing and bookings stay unchanged.</Text></View>
+      <Pressable accessibilityRole="button" accessibilityState={{ disabled: locked }} disabled={locked} onPress={save} style={[edit.primary, locked && { opacity: 0.5 }]}>{busy ? <ActivityIndicator color="#FFF" /> : <Text style={edit.primaryText}>Save profile</Text>}</Pressable><Pressable accessibilityRole="button" disabled={locked} onPress={onClose} style={edit.secondary}><Text style={styles.editText}>Cancel</Text></Pressable>
+    </ScrollView></KeyboardAvoidingView></Modal>;
+}
+const edit = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12, backgroundColor: COLORS.secondary }, title: { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary },
+  content: { padding: 20, gap: 16, width: '100%', maxWidth: 640, alignSelf: 'center' }, photo: { alignItems: 'center', gap: 8 },
+  label: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '600', marginTop: 16, marginBottom: 8 }, help: { color: COLORS.textMuted, fontSize: 14, lineHeight: 21, marginTop: 8 },
+  input: { borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 12, minHeight: 52, padding: 14, fontSize: 16, backgroundColor: COLORS.inputBg, color: COLORS.textPrimary },
+  error: { color: '#B52636', fontSize: 14, lineHeight: 21 }, smallButton: { minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center' },
+  primary: { minHeight: 52, backgroundColor: COLORS.primary, borderRadius: 13, padding: 14, alignItems: 'center', justifyContent: 'center' }, primaryText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
+  secondary: { minHeight: 48, borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 13, backgroundColor: COLORS.secondary, padding: 14, alignItems: 'center', justifyContent: 'center' },
+});
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.background },
