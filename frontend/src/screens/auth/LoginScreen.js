@@ -11,6 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Image,
 } from "react-native";
 import { COLORS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
@@ -40,34 +41,16 @@ const LoginScreen = ({ navigation }) => {
     setLoading(false);
 
     if (result.success) {
-      // Role navigation handled by RootNavigator or direct replace
-      if (result.role === "customer") {
-        navigation.replace("CustomerNavigator");
-      } else if (result.role === "provider") {
-        navigation.replace("ProviderNavigator");
-      } else if (result.role === "admin") {
-        navigation.replace("AdminNavigator");
-      }
+      // RootNavigator switches to the signed-in user's role automatically.
+      return;
     } else if (result.requiresVerification) {
-      Alert.alert(
-        "Account Verification Required",
-        result.message || "Please verify your account before logging in.",
-        [
-          {
-            text: "Verify OTP Now",
-            onPress: () =>
-              navigation.navigate("OtpVerification", {
-                identifier: result.identifier || identifier.trim(),
-              }),
-          },
-        ]
-      );
+      navigation.navigate("OtpVerification", {
+        identifier: result.identifier || identifier.trim(),
+      });
     } else if (result.requiresAdminApproval) {
-      Alert.alert(
-        "🛡️ Admin Review Pending",
-        result.message ||
-          "Your Service Provider account is currently under review by an administrator. You will be able to log in once your NIC & documents are approved."
-      );
+      setErrorMessage(result.message || (result.approvalStatus === "rejected"
+        ? "Your provider application was rejected. Please contact support."
+        : "Your provider account is awaiting admin approval. Please log in after your documents are approved."));
     } else {
       setErrorMessage(result.message || "Invalid login credentials");
     }
@@ -86,8 +69,12 @@ const LoginScreen = ({ navigation }) => {
         >
           {/* Header & Logo */}
           <View style={styles.headerContainer}>
-            <View style={styles.logoBadge}>
-              <Text style={styles.logoBadgeText}>FM</Text>
+            <View style={styles.logoContainer}>
+              <Image
+                source={require("../../../assets/images/FixMate Logo.png")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
             <Text style={styles.title}>Welcome Back!</Text>
             <Text style={styles.subtitle}>Sign in to continue to FixMate</Text>
@@ -191,7 +178,7 @@ const LoginScreen = ({ navigation }) => {
 
           {/* Footer Sign Up Link */}
           <View style={styles.footerContainer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Text style={styles.footerText}>{"Don't have an account? "}</Text>
             <TouchableOpacity onPress={() => navigation.navigate("Signup")}>
               <Text style={styles.signupLinkText}>Sign Up</Text>
             </TouchableOpacity>
@@ -221,24 +208,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 28,
   },
-  logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
+  logoContainer: {
+    width: 100,
+    height: 100,
+    marginBottom: 12,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
   },
-  logoBadgeText: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: COLORS.secondary,
+  logoImage: {
+    width: "100%",
+    height: "100%",
   },
   title: {
     fontSize: 28,

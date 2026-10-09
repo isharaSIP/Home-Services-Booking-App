@@ -2,6 +2,7 @@ import api from "./api";
 import { setSecureItem, deleteSecureItem } from "../utils/storage";
 
 export const authService = {
+  updateProfile: async values => (await api.patch('/auth/profile', values)).data.user,
   // Login user
   login: async (identifier, password) => {
     const response = await api.post("/auth/login", { identifier, password });
@@ -63,7 +64,7 @@ export const authService = {
   // Helper to store session tokens securely
   saveSession: async (token, user) => {
     if (token) await setSecureItem("userToken", token);
-    if (user) await setSecureItem("userData", JSON.stringify(user));
+    if (user) await setSecureItem("userData", JSON.stringify({ ...user, avatar: undefined }));
   },
 
   // Clear session on logout

@@ -7,9 +7,11 @@ const sanitizeUser = (user) => {
   return {
     id: user._id,
     name: user.name,
+    avatar: user.avatar || "",
     email: user.email,
     phone: user.phone,
     role: user.role,
+    location: user.location || {},
     isVerified: user.isVerified,
     isApprovedByAdmin: user.isApprovedByAdmin,
     providerDetails: user.providerDetails || {},
@@ -476,6 +478,133 @@ const resetPassword = async (req, res) => {
 };
 
 /**
+ * @desc    Update the current customer's or provider's profile
+ * @route   PATCH /api/auth/profile
+ * @access  Private
+ */
+const updateProfile = async (req, res) => {
+  try {
+    if (!["customer", "provider"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Use admin profile settings." });
+    }
+
+    const updates = {};
+    if (req.body.avatar !== undefined) {
+      if (req.user.role !== 'provider') return res.status(403).json({ message: 'Provider profile photos only.' });
+      const photo = req.body.avatar;
+      if (typeof photo !== 'string' || photo.length > 1400000) return res.status(400).json({ message: 'Choose a JPEG or PNG photo under 1 MB.' });
+      if (photo) {
+        const match = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/.exec(photo);
+        if (!match) return res.status(400).json({ message: 'Only JPEG and PNG photos are supported.' });
+        const bytes = Buffer.from(match[2], 'base64');
+        const valid = bytes.toString('base64') === match[2] && bytes.length <= 1024 * 1024 && (match[1] === 'png'
+          ? bytes.length >= 45 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) && bytes.toString('ascii', 12, 16) === 'IHDR' && bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0 && bytes.subarray(-8, -4).toString() === 'IEND'
+          : bytes.length >= 20 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 && bytes[bytes.length - 2] === 255 && bytes[bytes.length - 1] === 217);
+        if (!valid) return res.status(400).json({ message: 'This photo is invalid or larger than 1 MB. Choose another JPEG or PNG.' });
+      }
+      updates.avatar = photo;
+    }
+
+
+    if (req.user.role === "provider" && req.body.acceptingRequests !== undefined) {
+      if (typeof req.body.acceptingRequests !== "boolean") {
+        return res.status(400).json({ message: "Invalid request availability." });
+      }
+      updates["providerDetails.acceptingRequests"] = req.body.acceptingRequests;
+    }
+
+    for (const [field, maxLength] of [["name", 120], ["phone", 18]]) {
+      if (req.body[field] === undefined) continue;
+      const value = req.body[field];
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.trim().length > maxLength ||
+        (field === "phone" && (!/^\+?[\d\s-]{7,18}$/.test(value.trim()) || value.replace(/\D/g, "").length < 7))
+      ) {
+        return res.status(400).json({ message: "Enter a valid name and phone number." });
+      }
+      updates[field] = value.trim();
+    }
+
+    if (req.body.location !== undefined) {
+      const location = req.body.location;
+      if (
+        !location ||
+        typeof location !== "object" ||
+        typeof location.address !== "string" ||
+        typeof location.city !== "string" ||
+        location.address.trim().length > 300 ||
+        location.city.trim().length > 120 ||
+        (!location.address.trim() && !location.city.trim())
+      ) {
+        return res.status(400).json({ message: "Enter a street address or city." });
+      }
+
+      const validCoordinate = (value, max) =>
+        value === null ||
+        (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= max);
+      if (
+        !validCoordinate(location.latitude, 90) ||
+        !validCoordinate(location.longitude, 180) ||
+        (location.latitude === null) !== (location.longitude === null)
+      ) {
+        return res.status(400).json({ message: "Enter valid latitude and longitude together." });
+      }
+
+      updates.location = {
+        address: location.address.trim(),
+        city: location.city.trim(),
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+    }
+
+    if (req.user.role === "provider" && req.body.providerDetails !== undefined) {
+      const details = req.body.providerDetails;
+      if (!details || typeof details !== "object") {
+        return res.status(400).json({ message: "Invalid provider profile." });
+      }
+
+      for (const [field, maxLength] of [
+        ["bio", 2000],
+        ["serviceArea", 300],
+        ["experience", 120],
+      ]) {
+        if (
+          typeof details[field] !== "string" ||
+          details[field].trim().length > maxLength
+        ) {
+          return res.status(400).json({ message: "Check your profile details." });
+        }
+        updates[`providerDetails.${field}`] = details[field].trim();
+      }
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $set: updates,
+        ...(updates["providerDetails.acceptingRequests"] !== undefined
+          ? { $inc: { "providerDetails.availabilityRevision": 1 } }
+          : {}),
+      },
+      { returnDocument: "after", runValidators: true }
+    );
+
+    return res.status(200).json({ user: sanitizeUser(user) });
+  } catch (error) {
+    console.error("Update Profile Error:", error);
+    return res.status(error.code === 11000 ? 409 : 503).json({
+      message:
+        error.code === 11000
+          ? "This phone number belongs to another account."
+          : "Unable to save your profile. Please try again.",
+    });
+  }
+};
+
+/**
  * @desc    Get Current Logged In User Profile
  * @route   GET /api/auth/me
  * @access  Private
@@ -528,6 +657,7 @@ const updateLocation = async (req, res) => {
 };
 
 module.exports = {
+  updateProfile,
   register,
   verifyOtp,
   resendOtp,

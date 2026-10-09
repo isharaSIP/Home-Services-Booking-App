@@ -1,7 +1,8 @@
 import React from "react";
-import { StyleSheet } from "react-native";
+import { StyleSheet, Platform } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../constants/theme";
 
 import AdminDashboard from "../screens/admin/AdminDashboard";
@@ -23,6 +24,7 @@ const TABS = [
 ];
 
 const AdminNavigator = () => {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       initialRouteName="Dashboard"
@@ -31,7 +33,13 @@ const AdminNavigator = () => {
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.textMuted,
         tabBarLabelStyle: styles.label,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            height: Platform.OS === "ios" ? 60 + insets.bottom : 65 + Math.max(0, insets.bottom),
+            paddingBottom: Math.max(8, insets.bottom),
+          },
+        ],
         tabBarItemStyle: styles.item,
       }}
     >
