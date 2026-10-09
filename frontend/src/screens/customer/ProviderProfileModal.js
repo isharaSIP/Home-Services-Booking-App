@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View, Image } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bookingPrice } from '../../services/bookingService';
@@ -32,7 +32,7 @@ export default function ProviderProfileModal({ visible, provider: p, loading, er
       {!!shareError && <Text accessibilityRole="alert" style={styles.feedback}>{shareError}</Text>}
       {loading ? <View style={styles.state}><ActivityIndicator size="large" color={purple} /><Text style={styles.body}>Loading profile…</Text></View> : error ? <View style={styles.state}><Text accessibilityRole="alert" style={styles.body}>{error}</Text><Pressable onPress={onRetry} accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Try again</Text></Pressable></View> : p && <ScrollView contentContainerStyle={[styles.content, { paddingBottom: Math.max(24, insets.bottom) }]}>
         <View style={[styles.card, styles.hero]}>
-          <View style={styles.avatar}><Text style={styles.initials}>{initials}</Text>{p.verified && <View style={styles.avatarBadge}><Icon name="check-decagram-outline" color="#FFF" size={18} /></View>}</View>
+          <View style={styles.avatar}><>{p.avatar ? <Image accessibilityLabel={p.name + " profile photo"} source={{ uri: p.avatar }} style={{ width: 78, height: 78, borderRadius: 40 }} /> : <Text style={styles.initials}>{initials}</Text>}</>{p.verified && <View style={styles.avatarBadge}><Icon name="check-decagram-outline" color="#FFF" size={18} /></View>}</View>
           <Text style={styles.name}>{p.name}</Text><Text style={styles.subtitle}>{p.category}</Text>
           {p.verified && <View style={styles.badge}><Icon name="shield-check" size={14} /><Text style={styles.badgeText}>Verified Provider</Text></View>}
           <View style={styles.stats}>
