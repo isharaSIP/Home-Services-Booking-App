@@ -46,6 +46,10 @@ function createBookingController(Booking, User) {
   }
   const ownProvider = req => req.user.role === 'provider' && req.user.isVerified && req.user.isApprovedByAdmin && req.user.providerDetails?.approvalStatus === 'approved';
   const handle = fn => async (req, res) => { try { await fn(req, res); } catch (error) { if (error.httpStatus) return res.status(error.httpStatus).json({ message: error.message }); if (error.code === 11000) return res.status(409).json({ message: 'That appointment is no longer available. Please choose another time.' }); return res.status(503).json({ message: 'Booking service is temporarily unavailable. Please try again.' }); } };
+  async function conversationMessages(booking) {
+    const rows = await Booking.find({ customer: booking.customer, provider: booking.provider }).select('messages').lean();
+    return rows.flatMap(b => (b.messages || []).map(m => ({ ...m, id: String(b._id) + ':' + m.id }))).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt) || a.id.localeCompare(b.id));
+  }
   async function calendarView(id) {
     const p = await User.findById(id).select('providerDetails').lean();
     const calendar = await Availability.calendarFor(id), settings = scheduleSettings(p);
@@ -106,20 +110,20 @@ function createBookingController(Booking, User) {
     }),
     messages: handle(async (req, res) => {
       if (!idOK(req.params.id)) return res.status(400).json({ message: 'Invalid booking.' });
-      const b = await Booking.findOne({ _id: req.params.id, [req.user.role === 'provider' ? 'provider' : 'customer']: req.user._id }).select('messages').lean();
+      const b = await Booking.findOne({ _id: req.params.id, [req.user.role === 'provider' ? 'provider' : 'customer']: req.user._id }).select('customer provider').lean();
       if (!b) return res.status(404).json({ message: 'Conversation unavailable.' });
-      res.json({ messages: b.messages || [] });
+      res.json({ messages: await conversationMessages(b) });
     }),
     sendMessage: handle(async (req, res) => {
       const { text, requestId } = req.body;
       if (!idOK(req.params.id) || !textOK(text, 2000) || typeof requestId !== 'string' || !/^[a-zA-Z0-9-]{12,100}$/.test(requestId)) return res.status(400).json({ message: 'Enter a message of up to 2,000 characters.' });
       const owner = { _id: req.params.id, [req.user.role === 'provider' ? 'provider' : 'customer']: req.user._id };
-      const b = await Booking.findOne(owner).select('messages').lean();
+      const b = await Booking.findOne(owner).select('customer provider messages').lean();
       if (!b) return res.status(404).json({ message: 'Conversation unavailable.' });
       const message = { id: requestId, sender: String(req.user._id), text: text.trim(), createdAt: new Date() };
       await Booking.updateOne({ ...owner, 'messages.id': { $ne: requestId } }, { $push: { messages: message } });
-      const updated = await Booking.findOne(owner).select('messages').lean();
-      res.json({ messages: updated.messages || [] });
+      const updated = await Booking.findOne(owner).select('customer provider messages').lean();
+      res.json({ messages: await conversationMessages(updated) });
     }),
     availability: handle(async (req, res) => {
       if (!idOK(req.params.providerId)) return res.status(400).json({ message: 'Invalid provider.' });
