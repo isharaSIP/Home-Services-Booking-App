@@ -28,6 +28,10 @@ function validSlot(value, now = Date.now()) {
 function dto(b) {
   return { version: b.__v, lastMessage: b.messages?.length ? b.messages[b.messages.length - 1] : null, id: String(b._id), reference: `FM-${new Date(b.createdAt).getUTCFullYear()}-${String(b._id).toUpperCase()}`, providerId: String(b.provider), providerName: b.providerName, customerName: b.customerName, service: b.service, startsAt: b.startsAt, scheduleMode: b.scheduleMode || "published", windowEnd: b.windowEnd, scheduleConfirmed: b.scheduleConfirmed, proposedStartsAt: b.proposedStartsAt, proposalVersion: b.proposalVersion, durationMinutes: b.durationMinutes ?? 60, bufferMinutes: b.bufferMinutes ?? 30, problem: b.problem, location: b.location, notes: b.notes, price: b.price, priceUnit: b.priceUnit, pricing: b.pricing, quote: b.quote, previousApprovedQuote: [...(b.quoteHistory || [])].reverse().find(q => q?.status === 'accepted') || null, invoice: b.invoice, payment: b.payment, inspectionPerformed: b.inspectionPerformed, history: b.history || [], updatedAt: b.updatedAt, status: b.status, createdAt: b.createdAt };
 }
+async function currentDto(b, User = require('../models/User')) {
+  const p = await User.findById(b.provider).select('name avatar').lean();
+  return { ...dto(b), providerName: p?.name || b.providerName, providerAvatar: p?.avatar || '' };
+}
 function createBookingController(Booking, User) {
   const providerFields = 'name providerDetails.acceptingRequests providerDetails.category providerDetails.price providerDetails.priceUnit providerDetails.pricing providerDetails.bookingSlots providerDetails.appointmentDurationMinutes providerDetails.travelBufferMinutes providerDetails.serviceArea providerDetails.latitude providerDetails.longitude providerDetails.rating providerDetails.reviewCount';
   const approvedProvider = id => User.findOne({ _id: id, ...APPROVED }).select(providerFields).lean();
@@ -142,7 +146,7 @@ function createBookingController(Booking, User) {
       const { providerId, startsAt, problem, location, notes = '', requestId, scheduleMode = 'published', windowEnd } = req.body || {};
       if (!idOK(providerId) || !textOK(requestId, 100) || !textOK(problem, 2000) || !textOK(location, 500) || !textOK(notes, 1000, false)) return res.status(400).json({ message: 'Enter a valid provider, problem description and service location.' });
       const existing = await Booking.findOne({ customer: req.user._id, requestId });
-      if (existing) return res.json({ booking: dto(existing) });
+      if (existing) return res.json({ booking: await currentDto(existing, User) });
       if (!validPreference(startsAt, scheduleMode, windowEnd)) return res.status(400).json({ message: 'Choose a future time or a valid same-day window within the next 90 days.' });
       const p = await approvedProvider(providerId);
       if (p?.providerDetails.acceptingRequests === false) return res.status(409).json({ message: 'This provider paused new requests. Choose another provider or try later.' });
@@ -163,13 +167,15 @@ function createBookingController(Booking, User) {
         }
         [booking] = await Booking.create([{ history: [{ status: 'pending', action: 'request', at: new Date() }], providerNotifications: [event('request', 'New booking request')], pricing, quote, ...settings, scheduleMode, windowEnd, scheduleConfirmed: false, customer: req.user._id, customerName: req.user.name, provider: p._id, providerName: p.name, service: p.providerDetails.category || 'Service', startsAt, problem: problem.trim(), location: location.trim(), notes: notes.trim(), price: p.providerDetails.price ?? null, priceUnit: p.providerDetails.priceUnit || 'visit', requestId, ...(scheduleMode === 'published' ? { slotKey: `${p._id}:${new Date(startsAt).toISOString()}` } : {}) }], { session });
       }); }
-      catch (error) { if (error.code === 11000) { const replay = await Booking.findOne({ customer: req.user._id, requestId }); if (replay) return res.json({ booking: dto(replay) }); } throw error; }
-      res.status(201).json({ booking: dto(booking) });
+      catch (error) { if (error.code === 11000) { const replay = await Booking.findOne({ customer: req.user._id, requestId }); if (replay) return res.json({ booking: await currentDto(replay, User) }); } throw error; }
+      res.status(201).json({ booking: await currentDto(booking, User) });
     }),
     list: handle(async (req, res) => {
       const query = req.user.role === 'provider' ? { provider: req.user._id } : { customer: req.user._id };
       const bookings = await Booking.find(query).sort({ startsAt: -1 }).lean();
-      res.json({ bookings: bookings.map(dto) });
+      const providers = await User.find({ _id: { $in: [...new Set(bookings.map(b => String(b.provider)))] } }).select('name avatar').lean();
+      const profiles = new Map(providers.map(p => [String(p._id), p]));
+      res.json({ bookings: bookings.map(b => { const p = profiles.get(String(b.provider)); return { ...dto(b), providerName: p?.name || b.providerName, providerAvatar: p?.avatar || '' }; }) });
     }),
     update: handle(async (req, res) => {
       if (!idOK(req.params.id)) return res.status(400).json({ message: 'Invalid booking.' });
@@ -186,7 +192,7 @@ function createBookingController(Booking, User) {
       }
       let nextStatus, update, reservationStart, mustPublish = false;
       const fail = message => res.status(409).json({ message });
-      if (isProvider && action === 'confirm' && ['confirmed', 'awaiting_quote', 'inspection_confirmed'].includes(booking.status)) return res.json({ booking: dto(booking) });
+      if (isProvider && action === 'confirm' && ['confirmed', 'awaiting_quote', 'inspection_confirmed'].includes(booking.status)) return res.json({ booking: await currentDto(booking, User) });
       if (isProvider && action === 'propose_time') {
         if (!['pending', 'time_proposed'].includes(booking.status) || !validSlot(startsAt)) return fail('Choose a future alternative time for this request.');
         update = { $set: { status: 'time_proposed', proposedStartsAt: startsAt, proposalVersion: require('crypto').randomUUID() } };
@@ -261,7 +267,7 @@ function createBookingController(Booking, User) {
         updated = await write(session);
       }); else updated = await write();
       if (!updated) return res.status(409).json({ message: 'This booking changed. Refresh and try again.' });
-      res.json({ booking: dto(updated) });
+      res.json({ booking: await currentDto(updated, User) });
     }),
     notifications: handle(async (req, res) => {
       const rows = await Booking.find({ provider: req.user._id }).select('providerNotifications customerName service').lean();
@@ -323,4 +329,4 @@ function createBookingController(Booking, User) {
     }),
   };
 }
-module.exports = { event, createBookingController, validSlot, validPreference, overlaps, TIMES, dto };
+module.exports = { event, createBookingController, validSlot, validPreference, overlaps, TIMES, dto, currentDto };
