@@ -13,6 +13,9 @@
       "developmentClient": false,
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://glittering-banoffee-1aad8e.netlify.app/api"
       }
     },
     "production": {
