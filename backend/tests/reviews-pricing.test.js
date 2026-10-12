@@ -54,14 +54,6 @@ test('verified reviews and published pricing use isolated records', { skip: proc
     const profile = (await call(customer, '/providers/' + provider._id)).data.provider;
     assert.equal(profile.rating, 4); assert.equal(profile.reviewCount, 2); assert.equal(profile.reviews.length, 2); assert.equal(profile.referencePrice, 2500); assert.equal(profile.pricing, null);
     assert(!JSON.stringify(profile.reviews).includes('Private address'));
-    const reviews = (await call(customer, '/providers/' + provider._id + '/reviews?sort=highest&page=1')).data;
-    assert.equal(reviews.summary.averageRating, 4);
-    assert.equal(reviews.summary.totalReviews, 2);
-    assert.deepEqual(reviews.summary.distribution, { 5: 1, 4: 0, 3: 1, 2: 0, 1: 0 });
-    assert.equal(reviews.reviews[0].rating, 5);
-    assert.equal(reviews.reviews[0].customerName, 'ReviewCustomer');
-    assert.equal(reviews.pagination.hasMore, false);
-    assert(!JSON.stringify(reviews).includes('Private address'));
     assert.equal((await call(provider, '/bookings')).data.bookings.find(x => x.id === String(b._id)).review.rating, 5);
     for (const p of [{ type: 'fixed', amount: 1800 }, { type: 'estimate', min: 1200, max: 2500 }, { type: 'inspection', inspectionFee: 500 }]) {
       assert.equal((await call(provider, '/bookings/pricing', 'PATCH', { ...p, inclusions: 'Agreed scope', bankDetails: 'PRIVATE BANK' })).status, 200);

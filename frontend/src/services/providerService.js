@@ -10,14 +10,6 @@ export const getProvider = async (id, signal) => {
   return response.data.provider;
 };
 
-export const getProviderReviews = async (id, { sort = "recent", page = 1, signal } = {}) => {
-  const response = await api.get(`/providers/${encodeURIComponent(id)}/reviews`, {
-    params: { sort, page },
-    signal,
-  });
-  return response.data;
-};
-
 export const providerService = {
   // Fetch provider availability data (working days, off dates, slots) from backend DB
   getAvailability: async (signal) => {
