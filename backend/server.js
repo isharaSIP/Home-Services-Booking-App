@@ -29,12 +29,26 @@ app.use('/api/bookings', require('./routes/bookingRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/complaints', require('./routes/complaintRoutes'));
 
+// Share one initialization attempt across concurrent requests in a warm function.
+let initialization;
+function initialize() {
+  if (!initialization) {
+    initialization = (async () => {
+      await connectDB();
+      await require('./models/Booking').init();
+      await require('./models/Complaint').init();
+    })().catch(error => {
+      initialization = undefined;
+      throw error;
+    });
+  }
+  return initialization;
+}
+
+module.exports = { app, initialize };
 const PORT = process.env.PORT || 5000;
 
-connectDB().then(async () => {
-  // Booking writes must not start before the double-booking protection exists.
-  await require("./models/Booking").init();
-  await require('./models/Complaint').init();
+if (require.main === module) initialize().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
