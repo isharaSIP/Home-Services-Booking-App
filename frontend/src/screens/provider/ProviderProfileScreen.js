@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, Alert, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform, Image } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
@@ -7,7 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import Avatar from "../../components/provider/Avatar";
 import ScreenHeader, { BellButton } from "../../components/provider/ScreenHeader";
 import { useProviderData } from '../../context/ProviderContext';
-import { money, bookingPrice, bookingWhen } from '../../services/bookingService';
+import { money, bookingPrice, bookingWhen, bookingService } from '../../services/bookingService';
 
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -61,7 +61,8 @@ const chart = StyleSheet.create({
 // ---------------------------------------------------------------------------
 const ProviderProfileScreen = ({ navigation }) => {
   const { logout } = useAuth();
-  const { account: user, metrics, loaded, loading, error, load, saveProfile } = useProviderData();
+  const { account: user, metrics, loaded, loading, error, load, saveProfile, savePricing } = useProviderData();
+  const [pricingOpen, setPricingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const details = user?.providerDetails || {};
   const rating = details.reviewCount > 0 && Number.isFinite(details.rating) ? details.rating.toFixed(1) : '—';
@@ -93,6 +94,7 @@ const ProviderProfileScreen = ({ navigation }) => {
         <BellButton />
       </ScreenHeader>
 
+      {pricingOpen && <PricingEditor savePricing={savePricing} onClose={() => setPricingOpen(false)} onSaved={() => { setPricingOpen(false); setNotice('Pricing published. New customers can see it; existing bookings keep their agreed pricing.'); }} />}
       {editing && <EditProviderProfile user={user} saveProfile={saveProfile} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setNotice("Profile saved. Your public profile has been updated."); }} />}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {!!notice && <Text accessibilityLiveRegion="polite" style={{ color: GREEN }}>{notice}</Text>}
@@ -189,6 +191,8 @@ const ProviderProfileScreen = ({ navigation }) => {
           <Text style={[styles.serviceName, { marginTop: 12 }]}>{details.category || 'Service not set'}</Text>
           <Text style={styles.serviceUnit}>{bookingPrice({ pricing: details.pricing })}</Text>
           {!!details.pricing?.inclusions && <Text style={styles.serviceUnit}>{details.pricing.inclusions}</Text>}
+          {!details.pricing && <Text style={styles.serviceUnit}>Customers currently need to request a quote. Publish a fixed price, estimate range, or inspection fee to explain costs before booking.</Text>}
+          <Pressable accessibilityRole="button" onPress={() => setPricingOpen(true)} style={edit.primary}><Text style={edit.primaryText}>{details.pricing ? 'Edit service pricing' : 'Set service pricing'}</Text></Pressable>
 
         </View>
 
@@ -205,6 +209,26 @@ const ProviderProfileScreen = ({ navigation }) => {
     </View>
   );
 };
+
+function PricingEditor({ savePricing, onClose, onSaved }) {
+  const insets = useSafeAreaInsets(), [loaded, setLoaded] = useState(false), [pricing, setPricing] = useState(null), [error, setError] = useState(''), [attempt, setAttempt] = useState(0), [busy, setBusy] = useState(false);
+  useEffect(() => { const c = new AbortController(); bookingService.pricing(c.signal).then(p => { if (!c.signal.aborted) { setPricing(p); setLoaded(true); setError(''); } }).catch(e => { if (!c.signal.aborted) setError(e.response?.data?.message || 'Unable to load pricing. Try again.'); }); return () => c.abort(); }, [attempt]);
+  return <Modal visible animationType="slide" onRequestClose={() => { if (!busy) onClose(); }}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: COLORS.background, paddingTop: insets.top }}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}><Text style={styles.cardTitle}>Service pricing</Text><Text style={styles.serviceUnit}>Publish costs and scope for new requests. Existing bookings keep their agreed prices.</Text>{loaded ? <PricingForm pricing={pricing} savePricing={savePricing} onSaved={onSaved} onBusy={setBusy} /> : error ? <><Text accessibilityRole="alert" style={edit.error}>{error}</Text><Pressable accessibilityRole="button" onPress={() => { setError(''); setAttempt(n => n + 1); }} style={edit.primary}><Text style={edit.primaryText}>Retry pricing</Text></Pressable></> : <ActivityIndicator accessibilityLabel="Loading pricing" color={COLORS.primary} />}<Pressable accessibilityRole="button" disabled={busy} onPress={onClose} style={edit.primary}><Text style={edit.primaryText}>Close pricing editor</Text></Pressable></ScrollView></KeyboardAvoidingView></Modal>;
+}
+function PricingForm({ pricing, savePricing, onSaved, onBusy }) {
+  const [type, setType] = useState(pricing?.type || 'fixed'), [form, setForm] = useState({ amount: pricing?.amountMinor == null ? '' : String(pricing.amountMinor / 100), min: pricing?.minMinor == null ? '' : String(pricing.minMinor / 100), max: pricing?.maxMinor == null ? '' : String(pricing.maxMinor / 100), inspectionFee: pricing?.inspectionFeeMinor == null ? '' : String(pricing.inspectionFeeMinor / 100), inclusions: pricing?.inclusions || '', exclusions: pricing?.exclusions || '', bankDetails: pricing?.bankDetails || '' }), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const lock = useRef(false);
+  const fields = type === 'fixed' ? [['amount', 'Fixed total (LKR)']] : type === 'estimate' ? [['min', 'Minimum estimate (LKR)'], ['max', 'Maximum estimate (LKR)']] : [['inspectionFee', 'Inspection fee (LKR)']];
+  async function submit() {
+    if (lock.current) return;
+    if (!form.inclusions.trim() || fields.some(([key]) => !/^\d+(\.\d{1,2})?$/.test(form[key].trim()) || Number(form[key]) > 10000000) || (type === 'estimate' && Number(form.max) < Number(form.min))) { setError('Enter the included scope and valid non-negative amounts (up to two decimal places). The maximum estimate must not be below the minimum.'); return; }
+    lock.current = true; setBusy(true); onBusy(true); setError('');
+    try { await savePricing({ ...form, type, ...Object.fromEntries(fields.map(([key]) => [key, Number(form[key])])) }); onSaved(); }
+    catch (e) { setError((e.response?.data?.message || 'Unable to save pricing. Please retry.') + ' Your draft is kept.'); }
+    finally { lock.current = false; setBusy(false); onBusy(false); }
+  }
+  return <View style={[styles.card, styles.cardSpaced]}><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{[['fixed','Fixed price'],['estimate','Estimate range'],['inspection','Inspection fee']].map(([value,label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: type === value, disabled: busy }} disabled={busy} onPress={() => setType(value)} style={[edit.input, { borderColor: type === value ? COLORS.primary : COLORS.inputBorder }]}><Text style={styles.serviceName}>{type === value ? '✓ ' : ''}{label}</Text></Pressable>)}</View><Text style={styles.serviceUnit}>{type === 'fixed' ? 'The customer agrees to this total for the scope below.' : type === 'estimate' ? 'An indication only. Send an itemised quote for customer approval before work.' : 'Inspection only. Repairs require a separate approved quote.'}</Text>{[...fields, ['inclusions','Included scope *'], ['exclusions','Exclusions (optional)'], ['bankDetails','Bank transfer instructions (optional)']].map(([key,label]) => <View key={key}><Text style={edit.label}>{label}</Text><TextInput accessibilityLabel={label} editable={!busy} keyboardType={fields.some(([k]) => k === key) ? 'decimal-pad' : 'default'} multiline={!fields.some(([k]) => k === key)} value={form[key]} maxLength={fields.some(([k]) => k === key) ? 12 : 1000} onChangeText={value => setForm(current => ({ ...current, [key]: value }))} style={edit.input} /></View>)}<Text style={styles.serviceUnit}>Bank instructions appear only on invoices. FixMate does not transfer money.</Text>{!!error && <Text accessibilityRole="alert" style={edit.error}>{error}</Text>}<Pressable accessibilityRole="button" disabled={busy} onPress={submit} style={edit.primary}><Text style={edit.primaryText}>{busy ? 'Publishing…' : 'Publish pricing'}</Text></Pressable></View>;
+}
 
 function EditProviderProfile({ user, saveProfile, onClose, onSaved }) {
   const details = user?.providerDetails || {}, insets = useSafeAreaInsets();
