@@ -5,6 +5,7 @@ const { authorizeRoles } = require("../middleware/roleMiddleware");
 const {
   list,
   detail,
+  reviews,
   getAvailability,
   updateWorkingDays,
   toggleOffDate,
@@ -16,6 +17,7 @@ const {
 router.use(protect);
 
 router.get("/", list);
+router.get("/:id/reviews", reviews);
 
 // Provider management routes
 router.get("/availability", authorizeRoles("provider"), getAvailability);

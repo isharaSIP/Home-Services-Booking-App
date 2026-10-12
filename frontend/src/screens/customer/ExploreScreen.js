@@ -3,13 +3,12 @@ import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pre
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { bookingPrice } from '../../services/bookingService';
-import ProviderProfileModal from "./ProviderProfileModal";
 import * as Location from "expo-location";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../constants/theme";
-import { getProvider, getProviders } from "../../services/providerService";
+import { getProviders } from "../../services/providerService";
 import { availabilityLabel, CATEGORIES, EMPTY_FILTERS, filterProviders, SORT_OPTIONS } from "../../utils/exploreProviders";
 
 const PROVIDER_PHOTOS = {
@@ -167,16 +166,17 @@ export default function ExploreScreen({ navigation, route }) {
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
 
-  const [profile, setProfile] = useState(null);
-  const [profileId, setProfileId] = useState(null);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileError, setProfileError] = useState("");
-
   useFocusEffect(useCallback(() => { if (route?.params?.category) setCategory(route.params.category); }, [route]));
+  useFocusEffect(useCallback(() => {
+    if (!route?.params?.openFilters) return;
+    setDraft({ ...filters });
+    setFilterError("");
+    setSheet("filters");
+    navigation.setParams({ openFilters: undefined });
+  }, [filters, navigation, route?.params?.openFilters]));
   useFocusEffect(useCallback(() => { if (user?.location?.latitude != null) setLocation(user.location); }, [user]));
 
   const listRequest = useRef(null);
-  const profileRequest = useRef(null);
   const mounted = useRef(false);
 
   const load = useCallback(() => {
@@ -204,7 +204,6 @@ export default function ExploreScreen({ navigation, route }) {
     return () => {
       mounted.current = false;
       listRequest.current?.abort();
-      profileRequest.current?.abort();
     };
   }, [load]);
 
@@ -212,15 +211,6 @@ export default function ExploreScreen({ navigation, route }) {
     void load(); const timer = setInterval(load, 15000);
     return () => { clearInterval(timer); listRequest.current?.abort(); };
   }, [load]));
-  useEffect(() => {
-    if (sheet !== 'profile' || !profileId) return;
-    const controller = new AbortController();
-    const timer = setInterval(() => {
-      getProvider(profileId, controller.signal).then(result => { if (!controller.signal.aborted) setProfile(result); }).catch(() => {});
-    }, 15000);
-    return () => { clearInterval(timer); controller.abort(); };
-  }, [sheet, profileId]);
-
   const categories = useMemo(() => [
     ...CATEGORIES,
     ...providers.map(p => p.category).filter((c, i, all) => !CATEGORIES.some(base => base.toLowerCase() === c.toLowerCase()) && all.indexOf(c) === i)
@@ -250,27 +240,11 @@ export default function ExploreScreen({ navigation, route }) {
   };
 
   const close = () => {
-    profileRequest.current?.abort();
     setSheet(null);
   };
 
-  async function openProfile(id) {
-    profileRequest.current?.abort();
-    const controller = new AbortController();
-    profileRequest.current = controller;
-    setProfileId(id);
-    setProfile(null);
-    setProfileError("");
-    setProfileLoading(true);
-    setSheet("profile");
-    try {
-      const result = await getProvider(id, controller.signal);
-      if (!controller.signal.aborted) setProfile(result);
-    } catch (e) {
-      if (!controller.signal.aborted) setProfileError(e.response?.data?.message || "Unable to load this profile. Please try again.");
-    } finally {
-      if (!controller.signal.aborted) setProfileLoading(false);
-    }
+  function openProfile(id) {
+    navigation.getParent()?.navigate("ProviderProfile", { providerId: id });
   }
 
   async function chooseSort(value) {
@@ -557,8 +531,11 @@ export default function ExploreScreen({ navigation, route }) {
 
           <Pressable
             onPress={() => {
-              setDraft({ ...EMPTY_FILTERS });
+              const clearedFilters = { ...EMPTY_FILTERS };
+              setDraft(clearedFilters);
+              setFilters(clearedFilters);
               setFilterError("");
+              setSheet(null);
             }}
             style={styles.secondaryButton}
             accessibilityRole="button"
@@ -591,16 +568,6 @@ export default function ExploreScreen({ navigation, route }) {
         {locationError !== "" && <Text accessibilityRole="alert" style={styles.errorText}>{locationError}</Text>}
       </Sheet>
 
-      {/* Provider Details Profile Modal */}
-      <ProviderProfileModal
-        visible={sheet === "profile"}
-        provider={profile}
-        loading={profileLoading}
-        error={profileError}
-        onClose={close}
-        onRetry={() => openProfile(profileId)}
-        onTrackBookings={() => navigation.navigate("Bookings")}
-      />
     </View>
   );
 }
