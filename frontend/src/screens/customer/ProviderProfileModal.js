@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bookingPrice, bookingDate, pricingExplanation } from '../../services/bookingService';
 import { BookingFlowModal } from './BookingsScreen';
 
+import ProviderReviewsScreen from './ProviderReviewsScreen';
+
 const purple = '#7047FA';
 const Icon = ({ name, color = purple, size = 22 }) => <MaterialCommunityIcons name={name} color={color} size={size} />;
 function Section({ title, detail, children }) {
@@ -16,18 +18,20 @@ function InfoRow({ icon, title, description, verified }) {
 
 export default function ProviderProfileModal({ visible, provider: p, loading, error, onClose, onRetry, onTrackBookings }) {
   const insets = useSafeAreaInsets();
+  const [showReviews, setShowReviews] = useState(false);
   const [shareError, setShareError] = useState('');
   const [showAvailability, setShowAvailability] = useState(false);
   const initials = (p?.name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
-  const close = () => { setShowAvailability(false); setShareError(''); onClose(); };
+  const close = () => { setShowReviews(false); setShowAvailability(false); setShareError(''); onClose(); };
   async function share() {
     setShareError('');
     try { await Share.share({ message: [p.name, p.category, p.serviceArea, 'Find this professional in FixMate Explore.'].filter(Boolean).join(' · ') }); }
     catch { setShareError('Sharing is unavailable on this device. Please try again.'); }
   }
   if (visible && showAvailability && p) return <BookingFlowModal provider={p} onClose={() => setShowAvailability(false)} onTrack={() => { setShowAvailability(false); onClose(); onTrackBookings?.(); }} />;
-  return <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
-    <View style={[styles.screen, { paddingTop: insets.top }]} accessibilityViewIsModal>
+  return <Modal visible={visible} animationType="slide" onRequestClose={showReviews ? () => setShowReviews(false) : close} presentationStyle="fullScreen">
+    <View style={[styles.screen, { paddingTop: showReviews ? 0 : insets.top }]} accessibilityViewIsModal>
+      {showReviews && p ? <ProviderReviewsScreen key={p.id} provider={p} onBack={() => setShowReviews(false)} /> : <>
       <View style={styles.header}><Pressable onPress={close} accessibilityRole="button" accessibilityLabel="Back to Explore" style={styles.roundButton}><Icon name="arrow-left" color="#252525" /></Pressable><Text accessibilityRole="header" style={styles.title}>Provider Profile</Text><Pressable disabled={!p || loading || !!error} onPress={share} accessibilityRole="button" accessibilityLabel="Share provider profile" style={styles.roundButton}><Icon name="share-variant-outline" color="#252525" /></Pressable></View>
       {!!shareError && <Text accessibilityRole="alert" style={styles.feedback}>{shareError}</Text>}
       {loading ? <View style={styles.state}><ActivityIndicator size="large" color={purple} /><Text style={styles.body}>Loading profile…</Text></View> : error ? <View style={styles.state}><Text accessibilityRole="alert" style={styles.body}>{error}</Text><Pressable onPress={onRetry} accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Try again</Text></Pressable></View> : p && <ScrollView contentContainerStyle={[styles.content, { paddingBottom: Math.max(24, insets.bottom) }]}>
@@ -46,8 +50,10 @@ export default function ProviderProfileModal({ visible, provider: p, loading, er
         <Section title="Qualifications"><View style={styles.card}><InfoRow icon="check-decagram-outline" title={p.qualifications || 'Qualifications not listed'} description={p.qualifications ? 'Provided by the professional' : 'No public qualification details added yet.'} /></View>{!!p.experience && <View style={[styles.card, styles.spaced]}><InfoRow icon="school-outline" title={p.experience + ' experience'} description="Professional experience" /></View>}</Section>
         <Section title="Verification"><View style={styles.card}><InfoRow icon={p.verified ? 'check' : 'shield-outline'} verified={p.verified} title={p.verified ? 'Provider Verified' : 'Verification not available'} description={p.verified ? 'Reviewed and approved by FixMate' : 'Verification details have not been provided.'} /></View></Section>
         <Section title="Ratings & Reviews" detail={p.rating == null ? 'No ratings yet' : '★ ' + p.rating.toFixed(1) + ' (' + p.reviewCount + ')'}>{p.reviews?.length ? <>{p.reviews.map((review, i) => <View key={review.createdAt + '-' + i} style={[styles.card, styles.spaced]}><Text style={styles.rowTitle}>{review.customerName} · {review.rating} out of 5 stars</Text><Text style={styles.caption}>{bookingDate(review.createdAt)} · Verified booking</Text>{!!review.comment && <Text style={styles.body}>{review.comment}</Text>}<Text style={styles.caption}>{review.service}</Text></View>)}<Text style={styles.caption}>Showing the latest {p.reviews.length} reviews.</Text></> : <View style={styles.card}><Text style={styles.body}>No written reviews yet. After a completed service, customers can leave a review from My Bookings.</Text></View>}</Section>
+        <Pressable onPress={() => setShowReviews(true)} accessibilityRole="button" accessibilityLabel="View all provider ratings and reviews" style={[styles.button, { marginTop: 16 }]}><Text style={styles.buttonText}>View all ratings &amp; reviews</Text><Icon name="chevron-right" color="#FFF" /></Pressable>
         <View style={styles.actionArea}><Pressable disabled={p.acceptingRequests === false} onPress={() => setShowAvailability(value => !value)} accessibilityRole="button" accessibilityState={{ disabled: p.acceptingRequests === false, expanded: showAvailability }} style={[styles.button, p.acceptingRequests === false && { opacity: 0.5 }]}><Text style={styles.buttonText}>Continue with Provider</Text><Icon name="arrow-right" color="#FFF" size={20} /></Pressable><Text style={styles.actionCaption}>{p.acceptingRequests === false ? "This provider has paused new requests. Please choose another provider." : "No immediate charge"}</Text></View>
       </ScrollView>}
+      </>}
     </View>
   </Modal>;
 }

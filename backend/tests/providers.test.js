@@ -36,6 +36,63 @@ test("profile rejects malformed IDs before querying, and hides unavailable provi
   const invalid = response(); await controller.detail({ params: { id: "bad-id" } }, invalid); assert.equal(invalid.code, 400); assert.equal(query, undefined);
   const missing = response(); await controller.detail({ params: { id: provider._id } }, missing); assert.equal(missing.code, 404); assert.equal(query.isApprovedByAdmin, true); assert.equal(query.isVerified, true);
 });
+test("provider reviews validate sort and page then return database aggregates and a sorted page", async () => {
+  let aggregatePipeline;
+  const controller = createProviderController(
+    { findOne() { return { select() { return this; }, async lean() { return { _id: provider._id, providerDetails: {} }; } }; } },
+    null,
+    { async aggregate(pipeline) {
+      aggregatePipeline = pipeline;
+      return [{
+        summary: [{ total: 2, average: 4, five: 1, four: 1, three: 0, two: 0, one: 0 }],
+        reviews: [{ rating: 5, comment: "Good work", createdAt: new Date("2026-10-01T00:00:00Z"), customerName: "Actual Customer", service: "Plumbing" }],
+      }];
+    } },
+  );
+  const run = async (query = {}) => {
+    const res = response();
+    await controller.reviews({ params: { id: provider._id }, query }, res);
+    return res;
+  };
+  assert.equal((await run({ sort: "invented" })).code, 400);
+  assert.equal((await run({ page: "0" })).code, 400);
+  const res = await run({ sort: "highest", page: "2" });
+  assert.equal(res.code, 200);
+  assert.deepEqual(res.body.summary, {
+    averageRating: 4,
+    totalReviews: 2,
+    distribution: { 5: 1, 4: 1, 3: 0, 2: 0, 1: 0 },
+  });
+  assert.equal(res.body.reviews[0].customerName, "Actual");
+  assert.equal(res.body.pagination.page, 2);
+  assert.equal(res.body.pagination.limit, 10);
+  assert.equal(res.body.pagination.hasMore, false);
+  assert.deepEqual(aggregatePipeline[0].$match, {
+    provider: new (require("mongoose").Types.ObjectId)(provider._id),
+    status: "completed",
+    "review.rating": { $exists: true },
+  });
+  const facet = aggregatePipeline[1].$facet;
+  assert.deepEqual(facet.reviews[0].$sort, { "review.rating": -1, "review.createdAt": -1, _id: -1 });
+  assert.equal(facet.reviews[1].$skip, 10);
+  assert.equal(facet.reviews[2].$limit, 10);
+});
+test("provider review endpoint returns an explicit empty summary without inventing reviews", async () => {
+  const controller = createProviderController(
+    { findOne() { return { select() { return this; }, async lean() { return { _id: provider._id, providerDetails: {} }; } }; } },
+    null,
+    { async aggregate() { return [{ summary: [], reviews: [] }]; } },
+  );
+  const res = response(); await controller.reviews({ params: { id: provider._id }, query: {} }, res);
+  assert.equal(res.code, 200);
+  assert.deepEqual(res.body.summary, {
+    averageRating: null,
+    totalReviews: 0,
+    distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+  });
+  assert.deepEqual(res.body.reviews, []);
+  assert.equal(res.body.pagination.hasMore, false);
+});
 test("database errors produce a retryable response without leaking details", async () => {
   const controller = createProviderController({ find() { throw new Error("private database URI"); } });
   const res = response(); await controller.list({}, res); assert.equal(res.code, 503); assert.ok(!JSON.stringify(res.body).includes("URI"));
