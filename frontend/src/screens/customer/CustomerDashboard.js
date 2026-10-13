@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import { COLORS, SHADOWS } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
+import { getProviders } from "../../services/providerService";
 
 // Attempt to import react-native-maps safely
 let MapView = null;
@@ -133,6 +134,10 @@ const CustomerDashboard = ({ navigation }) => {
 
   // Category Filter State for Popular Services
   const [activeTab, setActiveTab] = useState("All");
+  const [serviceQuery, setServiceQuery] = useState("");
+  const [providers, setProviders] = useState([]);
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providersError, setProvidersError] = useState("");
 
   // Update Location Modal State
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -149,6 +154,33 @@ const CustomerDashboard = ({ navigation }) => {
 
   const goExplore = () => navigation.navigate("Explore");
   const comingSoon = (title) => Alert.alert(title, "Coming soon.");
+  const matchingProviders = useMemo(() => {
+    const query = serviceQuery.trim().toLowerCase();
+    if (!query) return [];
+    return providers.filter((provider) =>
+      `${provider.name} ${provider.category} ${provider.serviceArea || ""}`.toLowerCase().includes(query)
+    );
+  }, [providers, serviceQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getProviders(controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setProviders(result);
+          setProvidersError("");
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setProvidersError(error.response?.data?.message || "Couldn’t load service providers. Please try again.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setProvidersLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
 
   // Location display string fetched from database session
   const displayLocation = user?.location?.address
@@ -299,19 +331,72 @@ const CustomerDashboard = ({ navigation }) => {
           </TouchableOpacity>
 
           {/* Search Bar */}
-          <TouchableOpacity
-            style={styles.search}
-            activeOpacity={0.9}
-            onPress={goExplore}
-            accessibilityRole="search"
-            accessibilityLabel="Search for a service"
-          >
+          <View style={styles.search}>
             <MaterialCommunityIcons name="magnify" size={22} color={COLORS.primary} />
-            <Text style={styles.searchText}>Search services, repairs, cleaning...</Text>
-            <View style={styles.searchFilterBadge}>
+            <TextInput
+              value={serviceQuery}
+              onChangeText={setServiceQuery}
+              placeholder="Search services, repairs, cleaning..."
+              placeholderTextColor={COLORS.disabledText}
+              accessibilityRole="search"
+              accessibilityLabel="Search service or provider"
+              style={styles.searchInput}
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+            {!!serviceQuery && (
+              <TouchableOpacity
+                onPress={() => setServiceQuery("")}
+                accessibilityRole="button"
+                accessibilityLabel="Clear service search"
+                hitSlop={8}
+              >
+                <MaterialCommunityIcons name="close-circle" size={19} color="#98A2B3" />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.searchFilterBadge}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate("Explore", { openFilters: true })}
+              accessibilityRole="button"
+              accessibilityLabel="Open service filters"
+            >
               <MaterialCommunityIcons name="tune-variant" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+          </View>
+          {!!serviceQuery.trim() && (
+            <View style={styles.searchResults}>
+              <Text style={styles.searchResultsTitle}>Matching providers</Text>
+              {providersLoading ? (
+                <ActivityIndicator color={COLORS.primary} style={styles.searchState} />
+              ) : providersError ? (
+                <Text accessibilityRole="alert" style={styles.searchStateText}>{providersError}</Text>
+              ) : matchingProviders.length ? (
+                matchingProviders.slice(0, 5).map((provider) => (
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={styles.searchResult}
+                    onPress={() => navigation.getParent()?.navigate("ProviderProfile", { providerId: provider.id })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View ${provider.name}, ${provider.category}`}
+                  >
+                    <View style={styles.searchResultIcon}>
+                      <MaterialCommunityIcons name="tools" size={17} color={COLORS.primary} />
+                    </View>
+                    <View style={styles.searchResultDetails}>
+                      <Text style={styles.searchResultName} numberOfLines={1}>{provider.name}</Text>
+                      <Text style={styles.searchResultMeta} numberOfLines={1}>
+                        {[provider.category, provider.serviceArea].filter(Boolean).join(" · ")}
+                      </Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={19} color="#98A2B3" />
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <Text style={styles.searchStateText}>No providers match “{serviceQuery.trim()}”.</Text>
+              )}
             </View>
-          </TouchableOpacity>
+          )}
         </View>
 
         {/* Service categories */}
@@ -738,12 +823,7 @@ const styles = StyleSheet.create({
     gap: 10,
     ...SHADOWS.small,
   },
-  searchText: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.disabledText,
-    fontWeight: "500",
-  },
+  searchInput: { flex: 1, minWidth: 0, paddingVertical: 0, fontSize: 14, color: COLORS.textPrimary },
   searchFilterBadge: {
     width: 34,
     height: 34,
@@ -752,6 +832,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  searchResults: { marginTop: 8, backgroundColor: "#FFFFFF", borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, ...SHADOWS.small },
+  searchResultsTitle: { color: COLORS.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 },
+  searchState: { paddingVertical: 12 },
+  searchStateText: { color: COLORS.textMuted, fontSize: 12, paddingVertical: 10 },
+  searchResult: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.inputBorder, paddingVertical: 7 },
+  searchResultIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: "#F3E8FF", alignItems: "center", justifyContent: "center" },
+  searchResultDetails: { flex: 1, minWidth: 0 },
+  searchResultName: { color: COLORS.textPrimary, fontSize: 13, fontWeight: "600" },
+  searchResultMeta: { color: COLORS.textMuted, fontSize: 11, marginTop: 2 },
   // Categories Card
   categoriesCard: {
     backgroundColor: COLORS.cardBg,
